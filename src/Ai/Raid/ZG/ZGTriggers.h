@@ -49,6 +49,16 @@ protected:
     bool IsActiveInEncounter() override;
 };
 
+// Venoxis in snake form: a bot that is not his victim stands in front of him, in reach of Venom Spit.
+class VenoxisVenomSpitTrigger : public ZulGurubEncounterTrigger
+{
+public:
+    VenoxisVenomSpitTrigger(PlayerbotAI* botAI) : ZulGurubEncounterTrigger(botAI, "venoxis venom spit") {}
+
+protected:
+    bool IsActiveInEncounter() override;
+};
+
 class BloodlordMandokirThreateningGazeTrigger : public ZulGurubEncounterTrigger
 {
 public:

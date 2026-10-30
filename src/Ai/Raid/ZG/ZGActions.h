@@ -21,12 +21,34 @@ public:
     bool Execute(Event event) override;
 };
 
-// Hakkar: out of Blood Scythe's cone to his nearer flank, at the same distance (melee stay in melee).
-class HakkarAvoidBloodScytheAction : public MovementAction
+// Out of a boss's frontal cone to his nearer flank, at the same distance (melee stay in melee, ranged in range).
+class ZulGurubMoveToBossFlankAction : public MovementAction
 {
 public:
-    HakkarAvoidBloodScytheAction(PlayerbotAI* botAI) : MovementAction(botAI, "hakkar avoid blood scythe") {}
+    ZulGurubMoveToBossFlankAction(PlayerbotAI* botAI, std::string const name, std::string const bossName,
+                                  float flankAngle)
+        : MovementAction(botAI, name), bossName(bossName), flankAngle(flankAngle)
+    {
+    }
     bool Execute(Event event) override;
+
+private:
+    std::string const bossName;
+    float const flankAngle;
+};
+
+// Hakkar: out of Blood Scythe's cone.
+class HakkarAvoidBloodScytheAction : public ZulGurubMoveToBossFlankAction
+{
+public:
+    HakkarAvoidBloodScytheAction(PlayerbotAI* botAI);
+};
+
+// Venoxis in snake form: out of Venom Spit's cone.
+class VenoxisAvoidVenomSpitAction : public ZulGurubMoveToBossFlankAction
+{
+public:
+    VenoxisAvoidVenomSpitAction(PlayerbotAI* botAI);
 };
 
 #endif

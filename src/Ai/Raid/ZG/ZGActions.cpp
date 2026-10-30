@@ -21,17 +21,27 @@ bool BloodlordMandokirStopCausingThreatAction::Execute(Event /*event*/)
     return true;
 }
 
-bool HakkarAvoidBloodScytheAction::Execute(Event /*event*/)
+HakkarAvoidBloodScytheAction::HakkarAvoidBloodScytheAction(PlayerbotAI* botAI)
+    : ZulGurubMoveToBossFlankAction(botAI, "hakkar avoid blood scythe", "hakkar", HAKKAR_SCYTHE_FLANK_ANGLE)
 {
-    Unit* boss = AI_VALUE2(Unit*, "find target", "hakkar");
+}
+
+VenoxisAvoidVenomSpitAction::VenoxisAvoidVenomSpitAction(PlayerbotAI* botAI)
+    : ZulGurubMoveToBossFlankAction(botAI, "venoxis avoid venom spit", "high priest venoxis", VENOXIS_SPIT_FLANK_ANGLE)
+{
+}
+
+bool ZulGurubMoveToBossFlankAction::Execute(Event /*event*/)
+{
+    Unit* boss = AI_VALUE2(Unit*, "find target", bossName);
     if (!boss)
         return false;
 
     float const distance = std::max(bot->GetDistance2d(boss), bot->GetMeleeRange(boss) * 0.5f);
     Position left = boss->GetPosition();
     Position right = boss->GetPosition();
-    left.RelocatePolarOffset(HAKKAR_SCYTHE_FLANK_ANGLE, distance);
-    right.RelocatePolarOffset(-HAKKAR_SCYTHE_FLANK_ANGLE, distance);
+    left.RelocatePolarOffset(flankAngle, distance);
+    right.RelocatePolarOffset(-flankAngle, distance);
     Position const& destination = bot->GetExactDist2d(left) < bot->GetExactDist2d(right) ? left : right;
 
     float x = destination.GetPositionX();

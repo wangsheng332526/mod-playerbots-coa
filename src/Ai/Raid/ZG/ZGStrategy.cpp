@@ -29,6 +29,11 @@ void RaidZulGurubStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     triggers.push_back(new TriggerNode("hakkar blood scythe", { NextAction("hakkar avoid blood scythe", ACTION_RAID + 1) }));
     triggers.push_back(new TriggerNode("hakkar blood pool", { NextAction("hakkar move from blood pool", ACTION_RAID + 1) }));
 
+    // High Priest Venoxis: his threat list is wiped when he turns into a snake; a tank takes him back at once,
+    // and everyone else keeps out of Venom Spit's cone meanwhile.
+    triggers.push_back(new TriggerNode("venoxis backup taunt", { NextAction("venoxis backup taunt", ACTION_RAID + 1) }));
+    triggers.push_back(new TriggerNode("venoxis venom spit", { NextAction("venoxis avoid venom spit", ACTION_RAID + 1) }));
+
     // Bloodlord Mandokir
     triggers.push_back(new TriggerNode("bloodlord mandokir threatening gaze",
         { NextAction("bloodlord mandokir stop causing threat", ACTION_EMERGENCY + 6) }));
