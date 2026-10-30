@@ -11,6 +11,7 @@
 #include "BWLActions.h"
 #include "BossAuraActions.h"
 #include "NamedObjectContext.h"
+#include "RaidBossScripts.h"
 
 class RaidBwlActionContext : public NamedObjectContext<Action>
 {
@@ -26,6 +27,7 @@ public:
 
         creators["bwl vaelastrasz fire resistance"] = &RaidBwlActionContext::bwl_vaelastrasz_fire_resistance_action;
         creators["bwl vaelastrasz move away"] = &RaidBwlActionContext::bwl_vaelastrasz_move_away;
+        creators["bwl vaelastrasz tank swap"] = &RaidBwlActionContext::bwl_vaelastrasz_tank_swap;
 
         creators["bwl broodlord fire resistance"] = &RaidBwlActionContext::bwl_broodlord_fire_resistance_action;
         creators["bwl broodlord ranged move away"] = &RaidBwlActionContext::bwl_broodlord_ranged_move_away;
@@ -52,6 +54,10 @@ private:
     static Action* bwl_razorgore_mark_boss(PlayerbotAI* ai) { return new BwlRazorgoreMarkBossAction(ai); }
     static Action* bwl_vaelastrasz_fire_resistance_action(PlayerbotAI* ai) { return new BossFireResistanceAction(ai, "vaelastrasz the corrupt"); }
     static Action* bwl_vaelastrasz_move_away(PlayerbotAI* ai) { return new BwlVaelastraszMoveAwayAction(ai); }
+    static Action* bwl_vaelastrasz_tank_swap(PlayerbotAI* ai)
+    {
+        return new RaidBackupTauntAction(ai, "bwl vaelastrasz tank swap", "vaelastrasz the corrupt");
+    }
     static Action* bwl_broodlord_fire_resistance_action(PlayerbotAI* ai) { return new BossFireResistanceAction(ai, "broodlord lashlayer"); }
     static Action* bwl_broodlord_ranged_move_away(PlayerbotAI* ai) { return new BwlBroodlordRangedMoveAwayAction(ai); }
     static Action* bwl_firemaw_fire_resistance_action(PlayerbotAI* ai) { return new BossFireResistanceAction(ai, "firemaw"); }

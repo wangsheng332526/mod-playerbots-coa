@@ -24,6 +24,7 @@ public:
         creators["bwl vaelastrasz fire resistance"] = &RaidBwlTriggerContext::bwl_vaelastrasz_fire_resistance_trigger;
         creators["bwl vaelastrasz positioning"] = &RaidBwlTriggerContext::bwl_vaelastrasz_positioning;
         creators["bwl vaelastrasz burning adrenaline"] = &RaidBwlTriggerContext::bwl_vaelastrasz_burning_adrenaline;
+        creators["bwl vaelastrasz tank swap"] = &RaidBwlTriggerContext::bwl_vaelastrasz_tank_swap;
 
         creators["bwl broodlord fire resistance"] = &RaidBwlTriggerContext::bwl_broodlord_fire_resistance_trigger;
         creators["bwl broodlord ranged too close"] = &RaidBwlTriggerContext::bwl_broodlord_ranged_too_close;
@@ -51,6 +52,7 @@ private:
     static Trigger* bwl_vaelastrasz_fire_resistance_trigger(PlayerbotAI* ai) { return new BossFireResistanceTrigger(ai, "vaelastrasz the corrupt"); }
     static Trigger* bwl_vaelastrasz_positioning(PlayerbotAI* ai) { return new BwlVaelastraszPositioningTrigger(ai); }
     static Trigger* bwl_vaelastrasz_burning_adrenaline(PlayerbotAI* ai) { return new BwlVaelastraszBurningAdrenalineTrigger(ai); }
+    static Trigger* bwl_vaelastrasz_tank_swap(PlayerbotAI* ai) { return new BwlVaelastraszTankSwapTrigger(ai); }
     static Trigger* bwl_broodlord_fire_resistance_trigger(PlayerbotAI* ai) { return new BossFireResistanceTrigger(ai, "broodlord lashlayer"); }
     static Trigger* bwl_broodlord_ranged_too_close(PlayerbotAI* ai) { return new BwlBroodlordRangedTooCloseTrigger(ai); }
     static Trigger* bwl_firemaw_fire_resistance_trigger(PlayerbotAI* ai) { return new BossFireResistanceTrigger(ai, "firemaw"); }

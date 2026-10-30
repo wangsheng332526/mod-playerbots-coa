@@ -43,6 +43,16 @@ public:
     bool IsActive() override;
 };
 
+// CoA Burning Adrenaline also cuts the threat its target generates by 100% (2110621 effect 2) and lands on the tank
+// every other cast (every 40 s): the tank under it cannot hold Vaelastrasz, and he turns his breath and cleave onto
+// whoever overtakes it. The first other tank in group order without it taunts him; also when he is on a non-tank.
+class BwlVaelastraszTankSwapTrigger : public Trigger
+{
+public:
+    BwlVaelastraszTankSwapTrigger(PlayerbotAI* botAI) : Trigger(botAI, "bwl vaelastrasz tank swap") {}
+    bool IsActive() override;
+};
+
 // Broodlord Lashlayer
 
 class BwlBroodlordRangedTooCloseTrigger : public Trigger

@@ -6,6 +6,7 @@
 
 #include "BWLTriggers.h"
 #include "BWLHelpers.h"
+#include "Group.h"
 #include "Playerbots.h"
 
 using namespace BlackwingLairHelpers;
@@ -53,6 +54,41 @@ bool BwlVaelastraszBurningAdrenalineTrigger::IsActive()
     // No check for Vaelastrasz, because bots may still have burning adrenaline even after Vaelastrasz died.
     // Stock 18173 or CoA 2110621 / 2110622-2110625.
     return HasBurningAdrenaline(bot);
+}
+
+bool BwlVaelastraszTankSwapTrigger::IsActive()
+{
+    if (!PlayerbotAI::IsTank(bot) || !bot->IsAlive() || HasBurningAdrenaline(bot))
+        return false;
+
+    Unit* boss = AI_VALUE2(Unit*, "find target", "vaelastrasz the corrupt");
+    if (!boss || !boss->IsAlive())
+        return false;
+
+    Unit* victim = boss->GetVictim();
+    if (!victim || victim == bot)
+        return false;
+
+    Player* victimPlayer = victim->ToPlayer();
+    if (victimPlayer && PlayerbotAI::IsTank(victimPlayer) && !HasBurningAdrenaline(victimPlayer))
+        return false;
+
+    Group* group = bot->GetGroup();
+    if (!group)
+        return false;
+
+    for (GroupReference* itr = group->GetFirstMember(); itr != nullptr; itr = itr->next())
+    {
+        Player* member = itr->GetSource();
+        if (!member || !member->IsAlive() || member == victim || !PlayerbotAI::IsTank(member) ||
+            !GET_PLAYERBOT_AI(member) || member->GetMapId() != bot->GetMapId() ||
+            member->HasUnitState(UNIT_STATE_LOST_CONTROL) || HasBurningAdrenaline(member))
+            continue;
+
+        return member == bot;
+    }
+
+    return false;
 }
 
 // Broodlord Lashlayer
