@@ -74,10 +74,10 @@ bool TeamWouldWear(Player* bot, Player* master, ItemTemplate const* proto)
     return false;
 }
 
-// Green or better gear, disenchantable at maxSkill, of no use to the bot itself.
+// Green or blue gear (never epic), disenchantable at maxSkill, of no use to the bot itself.
 bool IsJunkTemplate(PlayerbotAI* botAI, ItemTemplate const* proto, uint32 maxSkill)
 {
-    if (!proto || proto->Quality < ITEM_QUALITY_UNCOMMON || proto->Quality > ITEM_QUALITY_EPIC)
+    if (!proto || proto->Quality < ITEM_QUALITY_UNCOMMON || proto->Quality > ITEM_QUALITY_RARE)
         return false;
     if (proto->Class != ITEM_CLASS_ARMOR && proto->Class != ITEM_CLASS_WEAPON)
         return false;
@@ -127,7 +127,14 @@ Team TeamOf(PlayerbotAI* botAI)
 {
     if (!sPlayerbotAIConfig.altDisenchant || !botAI || !botAI->IsAltBot() || !botAI->GetMaster())
         return Team();
-    return Of(botAI->GetMaster()->GetGUID().GetCounter());
+    Team team = Of(botAI->GetMaster()->GetGUID().GetCounter());
+    // The bank mode works on the configured tab only: none, by mail.
+    if (team.mode == MODE_BANK && !sPlayerbotAIConfig.guildBankDepositTab)
+    {
+        team.mode = MODE_MAIL;
+        team.bankWithoutTab = true;
+    }
+    return team;
 }
 
 bool IsEnchanter(PlayerbotAI* botAI)
@@ -324,7 +331,11 @@ std::string Command(PlayerbotAI* botAI, Player* master, std::string const& arg)
             if (PlayerbotAI* altAI = itr->second ? GET_PLAYERBOT_AI(itr->second) : nullptr)
                 SendStatus(altAI);
 
-    std::string const how = team.mode == MODE_BANK ? "through the guild bank" : "by mail";
+    std::string how = team.mode == MODE_BANK ? "through the guild bank" : "by mail";
+    if (team.mode == MODE_BANK && !sPlayerbotAIConfig.guildBankDepositTab)
+        how += " (not before the server sets AiPlayerbot.GuildBankDeposit.Tab: by mail meanwhile)";
+    else if (team.mode == MODE_BANK)
+        how += " (tab " + std::to_string(sPlayerbotAIConfig.guildBankDepositTab) + ")";
     if (!team.enchanter)
         return "No enchanter in the team: the greens are sold (mode " + how + " kept for later).";
     return "Enchanter of the team: " + team.name + ", the greens go to it " + how + ".";
