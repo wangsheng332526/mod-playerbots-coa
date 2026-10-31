@@ -282,11 +282,14 @@ bool CoaEnchanterAction::Execute(Event /*event*/)
         // Mode mail, away from a vault: the materials go to the master.
         if (team.mode == CoaEnchanter::MODE_MAIL && !vault && now >= nextMail)
         {
-            nextMail = now + MAIL_SECONDS;
             std::vector<Item*> materials;
             for (Item* item : BagItems(bot))
                 if (CoaEnchanter::IsEnchantingMaterial(item->GetTemplate()) && !item->IsSoulBound())
                     materials.push_back(item);
+            // The 10 minutes count from a mail sent: an empty check must not hold back the first dusts.
+            if (materials.empty())
+                return false;
+            nextMail = now + MAIL_SECONDS;
             if (uint32 const sent = CoaEnchanter::MailItems(bot, master->GetGUID().GetCounter(), materials,
                                                              "Enchanting materials", "What I got from disenchanting."))
             {
