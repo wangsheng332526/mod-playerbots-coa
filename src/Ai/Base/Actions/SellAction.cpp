@@ -5,6 +5,7 @@
  */
 
 #include "SellAction.h"
+#include "CoaEnchanter.h"
 #include "CoaMissionMgr.h"
 #include "ChatHelper.h"
 #include "Event.h"
@@ -108,6 +109,10 @@ public:
             return SellItemsVisitor::Visit(item);
 
         if (proto->Class != ITEM_CLASS_ARMOR && proto->Class != ITEM_CLASS_WEAPON)
+            return true;
+
+        // A green the enchanter of the team takes: kept (by mail, guild bank, or disenchanted by the enchanter itself).
+        if (CoaEnchanter::KeepFromVendor(GET_PLAYERBOT_AI(item->GetOwner()), item))
             return true;
 
         ItemUsage usage = context->GetValue<ItemUsage>("item usage", item->GetEntry())->Get();

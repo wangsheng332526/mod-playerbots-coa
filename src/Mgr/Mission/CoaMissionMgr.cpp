@@ -7,12 +7,15 @@
 #include "CoaMissionMgr.h"
 
 #include "Bag.h"
+#include "Creature.h"
 #include "DBCStores.h"
 #include "DatabaseEnv.h"
 #include "Engine.h"
+#include "Event.h"
 #include "GameObject.h"
 #include "Group.h"
 #include "Item.h"
+#include "ItemPackets.h"
 #include "Mail.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
@@ -89,6 +92,12 @@ bool IsGatheringNode(GameObject* go)
             return true;
     }
     return false;
+}
+
+bool IsFishingPole(Item* item)
+{
+    ItemTemplate const* proto = item ? item->GetTemplate() : nullptr;
+    return proto && proto->Class == ITEM_CLASS_WEAPON && proto->SubClass == ITEM_SUBCLASS_WEAPON_FISHING_POLE;
 }
 }  // namespace
 
@@ -181,7 +190,31 @@ bool CoaMissionMgr::IsMissionBot(Player* bot, Player* requester)
 
 std::string CoaMissionMgr::SkillName(uint32 skillId)
 {
-    return skillId == SKILL_MINING ? "mining" : skillId == SKILL_HERBALISM ? "herbalism" : "?";
+    switch (skillId)
+    {
+        case SKILL_MINING:
+            return "mining";
+        case SKILL_HERBALISM:
+            return "herbalism";
+        case SKILL_SKINNING:
+            return "skinning";
+        case SKILL_FISHING:
+            return "fishing";
+        case TravelMgr::GATHER_CLOTH:
+            return "cloth";
+    }
+    return "?";
+}
+
+void CoaMissionMgr::EquipItem(Player* bot, Item* item, uint8 slot)
+{
+    if (!bot || !item)
+        return;
+    WorldPacket packet(CMSG_AUTOEQUIP_ITEM_SLOT, 9);
+    packet << item->GetGUID() << slot;
+    WorldPackets::Item::AutoEquipItemSlot request(std::move(packet));
+    request.Read();
+    bot->GetSession()->HandleAutoEquipItemSlotOpcode(request);
 }
 
 bool CoaMissionMgr::IsBench(Player* bot) const
@@ -387,7 +420,7 @@ void CoaMissionMgr::RestoreStrategiesAndGroup(Player* bot, uint32 prevFlags)
         }
     }
 
-    std::string change = "-mission";
+    std::string change = "-mission,-use bobber";
     auto put = [&](uint32 flag, char const* name)
     {
         change += (prevFlags & flag) ? ",+" : ",-";
@@ -419,6 +452,22 @@ void CoaMissionMgr::Finish(Player* bot, std::string const& reason)
     Remove(bot);
     // The view of the owner ends with the mission (Mind Vision of "mission watch").
     bot->RemoveAurasDueToSpell(2096);
+
+    // A fisher takes its weapons back: the ones it held, else the best of its bags.
+    if (mission.skillId == SKILL_FISHING && bot->IsAlive() && bot->IsInWorld() &&
+        IsFishingPole(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND)))
+    {
+        Item* weapon = mission.weapon ? bot->GetItemByGuid(mission.weapon) : nullptr;
+        if (weapon && !weapon->IsEquipped())
+        {
+            EquipItem(bot, weapon, EQUIPMENT_SLOT_MAINHAND);
+            Item* offhand = mission.offhand ? bot->GetItemByGuid(mission.offhand) : nullptr;
+            if (offhand && !offhand->IsEquipped())
+                EquipItem(bot, offhand, EQUIPMENT_SLOT_OFFHAND);
+        }
+        else if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot))
+            botAI->DoSpecificAction("equip upgrades packet action", Event(), true);
+    }
 
     if (mission.bench)
     {
@@ -458,7 +507,7 @@ void CoaMissionMgr::Finish(Player* bot, std::string const& reason)
 
 void CoaMissionMgr::OnLoot(Player* bot, Item* item, uint32 count, ObjectGuid lootGuid)
 {
-    if (!active.load() || !bot || !item || !count || !lootGuid.IsGameObject())
+    if (!active.load() || !bot || !item || !count || (!lootGuid.IsGameObject() && !lootGuid.IsCreature()))
         return;
 
     ItemTemplate const* proto = item->GetTemplate();
@@ -466,14 +515,32 @@ void CoaMissionMgr::OnLoot(Player* bot, Item* item, uint32 count, ObjectGuid loo
         proto->Bonding == BIND_QUEST_ITEM)
         return;
 
+    uint32 skillId = 0;
     {
         std::lock_guard<std::mutex> guard(lock);
-        if (missions.find(bot->GetGUID().GetCounter()) == missions.end())
+        auto const it = missions.find(bot->GetGUID().GetCounter());
+        if (it == missions.end())
             return;
+        skillId = it->second.skillId;
     }
 
-    if (!IsGatheringNode(ObjectAccessor::GetGameObject(*bot, lootGuid)))
-        return;
+    // Herbs and ore, a fishing catch (the bobber, or a pool), a skinned corpse, the cloth of a kill on a cloth
+    // mission: never the rest of the loot of a kill.
+    if (lootGuid.IsGameObject())
+    {
+        GameObject* go = ObjectAccessor::GetGameObject(*bot, lootGuid);
+        if (!go || (!IsGatheringNode(go) && go->GetGoType() != GAMEOBJECT_TYPE_FISHINGNODE &&
+                    go->GetGoType() != GAMEOBJECT_TYPE_FISHINGHOLE))
+            return;
+    }
+    else
+    {
+        Creature* creature = ObjectAccessor::GetCreature(*bot, lootGuid);
+        bool const cloth = skillId == TravelMgr::GATHER_CLOTH && proto->Class == ITEM_CLASS_TRADE_GOODS &&
+                           proto->SubClass == ITEM_SUBCLASS_CLOTH;
+        if (!creature || (creature->loot.loot_type != LOOT_SKINNING && !cloth))
+            return;
+    }
 
     std::lock_guard<std::mutex> guard(lock);
     auto const it = missions.find(bot->GetGUID().GetCounter());
@@ -643,6 +710,9 @@ void CoaMissionMgr::OnBotLogin(Player* bot)
     }
 
     TravelMgr::GatherCell const* cell = sTravelMgr.FindGatherCell(mission.mapId, mission.skillId, mission.x, mission.y);
+    // Water found next to the bot is no known cell: made again from what was saved.
+    if (!cell && mission.skillId == SKILL_FISHING && mission.state != CoaMissionState::Deliver)
+        cell = sTravelMgr.AddFishingCell(mission.mapId, mission.zoneId, mission.x, mission.y, mission.z);
     std::string reason;
     if (!sPlayerbotAIConfig.missionsEnable)
         reason = "missions are disabled on this server";
@@ -663,6 +733,7 @@ void CoaMissionMgr::OnBotLogin(Player* bot)
         change += (mission.prevFlags & FLAG_STAY) ? ",+stay" : "";
         change += (mission.prevFlags & FLAG_LFG) ? ",+lfg" : "";
         change += (mission.prevFlags & FLAG_GATHER_ALL) ? "" : ",-gather all";
+        change += ",-use bobber";
         botAI->ChangeStrategy(change, BOT_STATE_NON_COMBAT);
         botAI->TellMasterNoFacing("Mission done: " + reason + ". " +
                                   (sent ? std::to_string(sent) + " items sent to you by mail." : "Nothing gathered."));

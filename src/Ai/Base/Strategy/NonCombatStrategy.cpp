@@ -11,6 +11,7 @@ void NonCombatStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     triggers.push_back(new TriggerNode("random", { NextAction("clean quest log", 1.0f) }));
     triggers.push_back(new TriggerNode("timer", { NextAction("check mount state", 1.0f) }));
     triggers.push_back(new TriggerNode("timer", { NextAction("guild bank deposit", 1.0f) }));
+    triggers.push_back(new TriggerNode("timer", { NextAction("coa enchanter", 1.0f) }));
     triggers.push_back(new TriggerNode("timer", { NextAction("self found equip", 1.0f) }));
 }
 

@@ -45,6 +45,7 @@
 #include "MovementActions.h"
 #include "NewRpgAction.h"
 #include "CoaMissionAction.h"
+#include "CoaEnchanterAction.h"
 #include "CoaGuildBankDepositAction.h"
 #include "NewRpgOutdoorPvP.h"
 #include "NonCombatActions.h"
@@ -276,6 +277,7 @@ public:
 
         creators["mission update"] = &ActionContext::mission_update;
         creators["guild bank deposit"] = &ActionContext::guild_bank_deposit;
+        creators["coa enchanter"] = &ActionContext::coa_enchanter;
         creators["new rpg status update"] = &ActionContext::new_rpg_status_update;
         creators["new rpg go grind"] = &ActionContext::new_rpg_go_grind;
         creators["new rpg go camp"] = &ActionContext::new_rpg_go_camp;
@@ -487,6 +489,7 @@ private:
 
     static Action* mission_update(PlayerbotAI* ai) { return new CoaMissionUpdateAction(ai); }
     static Action* guild_bank_deposit(PlayerbotAI* ai) { return new CoaGuildBankDepositAction(ai); }
+    static Action* coa_enchanter(PlayerbotAI* ai) { return new CoaEnchanterAction(ai); }
     static Action* new_rpg_status_update(PlayerbotAI* ai) { return new NewRpgStatusUpdateAction(ai); }
     static Action* new_rpg_go_grind(PlayerbotAI* ai) { return new NewRpgGoGrindAction(ai); }
     static Action* new_rpg_go_camp(PlayerbotAI* ai) { return new NewRpgGoCampAction(ai); }

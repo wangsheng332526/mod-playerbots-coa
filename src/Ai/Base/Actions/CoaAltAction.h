@@ -11,8 +11,8 @@
 
 class PlayerbotAI;
 
-// "alt hello|quest <id>|take <id>|catchup <id>|train|learn all|learn <spell id>", whispered to an alt by its owner
-// or sent by the SquidBots Lite addon (prefix SQBA, CoaAltAddon).
+// "alt hello|quest <id>|take <id>|catchup <id>|train|learn all|learn <spell id>|enchanter ...", whispered to an alt
+// by its owner or sent by the SquidBots Lite addon (prefix SQBA, CoaAltAddon).
 class CoaAltAction : public QuestAction
 {
 public:

@@ -39,7 +39,7 @@ static bool IsFishingPole(Item* const item)
         proto->SubClass == ITEM_SUBCLASS_WEAPON_FISHING_POLE;
 }
 
-float HasFishableWaterOrLand(float x, float y, float z,  Map* map, uint32 phaseMask, bool checkForLand=false)
+float HasFishableWaterOrLand(float x, float y, float z, Map* map, uint32 phaseMask, bool checkForLand)
 {
     if (!map)
         return INVALID_HEIGHT;

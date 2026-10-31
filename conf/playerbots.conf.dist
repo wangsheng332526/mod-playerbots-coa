@@ -1812,8 +1812,8 @@ AiPlayerbot.Missions.MaxMinutes = 120
 AiPlayerbot.Missions.DefaultMinutes = 60
 
 # Missions at the same time per player (0 = no limit).
-# Default: 3
-AiPlayerbot.Missions.MaxPerPlayer = 3
+# Default: 4
+AiPlayerbot.Missions.MaxPerPlayer = 4
 
 # Deaths before the bot gives up and mails what it has.
 # Default: 3
@@ -1843,6 +1843,15 @@ AiPlayerbot.Missions.RiskMailMinutes = 15
 # nothing changes.
 # Default: 1 (enabled)
 AiPlayerbot.AltChatToAddon = 1
+
+# The enchanter of the team: you name one of your alts that knows Enchanting (SquidBots Lite, My alts, or
+# "alt enchanter set <name>" whispered to an alt). It disenchants the green or better gear nobody of the team
+# wears, and your other alts send it theirs instead of selling them: by mail ("alt enchanter mode mail", it mails
+# you the dusts, essences and shards, or puts them in the guild bank near a vault) or through the guild bank
+# ("alt enchanter mode bank": the alts put them there, the enchanter takes them out near the vault). The ranks need
+# the deposit and withdraw rights of the tab. Without an enchanter named nothing changes. 0 turns it all off.
+# Default: 1 (enabled)
+AiPlayerbot.AltDisenchant = 1
 
 # Automatic guild bank deposits: a bot in the guild of a real player (your alts, the bots you invited)
 # standing near a guild vault puts there the items of the classes below and the gold above KeepGold.

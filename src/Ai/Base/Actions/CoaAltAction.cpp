@@ -8,6 +8,7 @@
 
 #include "ChatHelper.h"
 #include "CoaAltAddon.h"
+#include "CoaEnchanter.h"
 #include "Event.h"
 #include "GameObject.h"
 #include "Playerbots.h"
@@ -65,6 +66,14 @@ bool CoaAltAction::Execute(Event event)
         out << "HELLO\t" << CoaAltAddon::PROTOCOL << "\t" << (sPlayerbotAIConfig.catchUpQuestChains ? 1 : 0) << "\t"
             << (sPlayerbotAIConfig.altChatToAddon ? 1 : 0);
         CoaAltAddon::SendToMaster(botAI, out.str());
+        CoaEnchanter::SendStatus(botAI);
+        return true;
+    }
+
+    // "alt enchanter [set <name>|clear|mode mail|mode bank]": the enchanter of the team (CoaEnchanter).
+    if (command == "enchanter")
+    {
+        botAI->TellMasterNoFacing(CoaEnchanter::Command(botAI, master, arg));
         return true;
     }
 
@@ -88,7 +97,8 @@ bool CoaAltAction::Execute(Event event)
 
     if (command != "quest" && command != "take" && command != "catchup")
     {
-        botAI->TellMaster("Usage: alt quest|take|catchup <quest>, alt train, alt learn all|<spell>");
+        botAI->TellMaster("Usage: alt quest|take|catchup <quest>, alt train, alt learn all|<spell>, "
+                          "alt enchanter [set <name>|clear|mode mail|bank]");
         return false;
     }
 

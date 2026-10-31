@@ -822,7 +822,7 @@ bool PlayerbotAIConfig::Initialize()
     missionsMaxMinutes = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("AiPlayerbot.Missions.MaxMinutes", 120, false), 1, 24 * 60);
     missionsDefaultMinutes = std::clamp<uint32>(
         sConfigMgr->GetOption<uint32>("AiPlayerbot.Missions.DefaultMinutes", 60, false), 1, missionsMaxMinutes);
-    missionsMaxPerPlayer = sConfigMgr->GetOption<uint32>("AiPlayerbot.Missions.MaxPerPlayer", 3, false);
+    missionsMaxPerPlayer = sConfigMgr->GetOption<uint32>("AiPlayerbot.Missions.MaxPerPlayer", 4, false);
     missionsMaxDeaths = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AiPlayerbot.Missions.MaxDeaths", 3, false));
     missionsTeleportFallback = sConfigMgr->GetOption<bool>("AiPlayerbot.Missions.TeleportFallback", true, false);
     missionsTeleportToSpot = sConfigMgr->GetOption<bool>("AiPlayerbot.Missions.TeleportToSpot", true, false);
@@ -831,6 +831,7 @@ bool PlayerbotAIConfig::Initialize()
     missionsRiskMailMinutes = sConfigMgr->GetOption<uint32>("AiPlayerbot.Missions.RiskMailMinutes", 15, false);
     altChatToAddon = sConfigMgr->GetOption<bool>("AiPlayerbot.AltChatToAddon", true, false);
     catchUpQuestChains = sConfigMgr->GetOption<bool>("AiPlayerbot.CatchUpQuestChains", true, false);
+    altDisenchant = sConfigMgr->GetOption<bool>("AiPlayerbot.AltDisenchant", true, false);
     guildBankDepositEnable = sConfigMgr->GetOption<bool>("AiPlayerbot.GuildBankDeposit.Enable", true, false);
     LoadGuildBankDepositItems(sConfigMgr->GetOption<std::string>("AiPlayerbot.GuildBankDeposit.Items", "ore,herb,leather,cloth,boe", false));
     guildBankDepositKeepGold = sConfigMgr->GetOption<uint32>("AiPlayerbot.GuildBankDeposit.KeepGold", 100, false);

@@ -9,6 +9,7 @@
 #include "Bag.h"
 #include "CellImpl.h"
 #include "CharacterCache.h"
+#include "CoaEnchanter.h"
 #include "CoaMissionMgr.h"
 #include "Event.h"
 #include "GameObject.h"
@@ -191,6 +192,11 @@ bool CoaGuildBankDepositAction::IsDepositable(Player* bot, Item const* item)
     if (proto->Class == ITEM_CLASS_QUEST || proto->StartQuest || proto->Bonding == BIND_QUEST_ITEM ||
         proto->Bonding == BIND_QUEST_ITEM1 || proto->Duration > 0 || proto->HasFlag(ITEM_FLAG_CONJURED))
         return false;
+
+    // The enchanter of the team decides first: its materials in, its gear to disenchant kept; the other alts' greens
+    // in (mode bank) or kept for the mail (mode mail).
+    if (int32 const rule = CoaEnchanter::DepositRule(bot ? GET_PLAYERBOT_AI(bot) : nullptr, item); rule >= 0)
+        return rule == 1;
     if (item->GetCount() < std::max<uint32>(1, sPlayerbotAIConfig.guildBankDepositMinStack))
         return false;
 
