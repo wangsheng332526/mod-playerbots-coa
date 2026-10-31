@@ -18,6 +18,7 @@
 #include "Guild.h"
 #include "GuildMgr.h"
 #include "Item.h"
+#include "ItemUsageValue.h"
 #include "NearestGameObjects.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
@@ -202,12 +203,23 @@ bool CoaGuildBankDepositAction::IsDepositable(Player* bot, Item const* item)
 
     for (auto const& [itemClass, itemSubClass] : sPlayerbotAIConfig.guildBankDepositItems)
     {
-        // "boe": bind-on-equip gear (green or better) this alt can never wear (a level too low is kept), for a guildmate.
+        // "boe": bind-on-equip gear, for a guildmate. A green this alt can never wear (a level too low is kept); a
+        // blue or an epic unless it is an upgrade for this alt itself.
         if (itemClass == GUILD_DEPOSIT_BOE)
         {
-            if (proto->Bonding == BIND_WHEN_EQUIPPED && proto->Quality >= ITEM_QUALITY_UNCOMMON &&
-                (proto->Class == ITEM_CLASS_ARMOR || proto->Class == ITEM_CLASS_WEAPON) &&
-                bot && bot->CanUseItem(proto) != EQUIP_ERR_OK && bot->CanUseItem(proto) != EQUIP_ERR_CANT_EQUIP_LEVEL_I)
+            if (proto->Bonding != BIND_WHEN_EQUIPPED || proto->Quality < ITEM_QUALITY_UNCOMMON ||
+                (proto->Class != ITEM_CLASS_ARMOR && proto->Class != ITEM_CLASS_WEAPON) || !bot)
+                continue;
+            if (proto->Quality >= ITEM_QUALITY_RARE)
+            {
+                PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
+                ItemUsage const usage = botAI ? botAI->GetAiObjectContext()->GetValue<ItemUsage>("item usage", proto->ItemId)->Get()
+                                              : ITEM_USAGE_NONE;
+                if (usage != ITEM_USAGE_EQUIP && usage != ITEM_USAGE_REPLACE)
+                    return true;
+                continue;
+            }
+            if (bot->CanUseItem(proto) != EQUIP_ERR_OK && bot->CanUseItem(proto) != EQUIP_ERR_CANT_EQUIP_LEVEL_I)
                 return true;
             continue;
         }

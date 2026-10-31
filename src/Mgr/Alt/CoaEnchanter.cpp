@@ -25,6 +25,7 @@
 #include "RandomPlayerbotMgr.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <ctime>
@@ -32,6 +33,7 @@
 #include <mutex>
 #include <sstream>
 #include <unordered_map>
+#include <vector>
 
 namespace
 {
@@ -44,15 +46,46 @@ std::unordered_map<ObjectGuid::LowType, std::pair<uint32, time_t>> skillCache;
 constexpr time_t GEAR_REFRESH_SECONDS = MINUTE;
 
 // What each alt of a team logged in can wear, read in the world thread (the alts live on other maps than the bot
-// asking): its class and race, its weapon skills, the heaviest armour it is trained for.
+// asking): its class and race, level, weapon skills, the heaviest armour it is trained for, and the item level of
+// what it wears in each slot (0: nothing there).
 struct AltGear
 {
     ObjectGuid::LowType guid = 0;
     uint32 classMask = 0;
     uint32 raceMask = 0;
+    uint32 level = 0;
     uint32 weapons = 0;
     uint32 armor = ITEM_SUBCLASS_ARMOR_CLOTH;
+    std::array<uint32, EQUIPMENT_SLOT_END> worn = {};
 };
+
+// The equipment slots an item of this inventory type goes in (rings, trinkets, necks, cloaks and shirts: none).
+std::vector<uint8> SlotsOf(uint32 inventoryType)
+{
+    switch (inventoryType)
+    {
+        case INVTYPE_HEAD: return {EQUIPMENT_SLOT_HEAD};
+        case INVTYPE_SHOULDERS: return {EQUIPMENT_SLOT_SHOULDERS};
+        case INVTYPE_CHEST:
+        case INVTYPE_ROBE: return {EQUIPMENT_SLOT_CHEST};
+        case INVTYPE_WAIST: return {EQUIPMENT_SLOT_WAIST};
+        case INVTYPE_LEGS: return {EQUIPMENT_SLOT_LEGS};
+        case INVTYPE_FEET: return {EQUIPMENT_SLOT_FEET};
+        case INVTYPE_WRISTS: return {EQUIPMENT_SLOT_WRISTS};
+        case INVTYPE_HANDS: return {EQUIPMENT_SLOT_HANDS};
+        case INVTYPE_WEAPON: return {EQUIPMENT_SLOT_MAINHAND, EQUIPMENT_SLOT_OFFHAND};
+        case INVTYPE_WEAPONMAINHAND:
+        case INVTYPE_2HWEAPON: return {EQUIPMENT_SLOT_MAINHAND};
+        case INVTYPE_WEAPONOFFHAND:
+        case INVTYPE_SHIELD:
+        case INVTYPE_HOLDABLE: return {EQUIPMENT_SLOT_OFFHAND};
+        case INVTYPE_RANGED:
+        case INVTYPE_RANGEDRIGHT:
+        case INVTYPE_THROWN:
+        case INVTYPE_RELIC: return {EQUIPMENT_SLOT_RANGED};
+        default: return {};
+    }
+}
 struct TeamGear
 {
     time_t at = 0;
@@ -84,6 +117,10 @@ public:
                 gear.guid = alt->GetGUID().GetCounter();
                 gear.classMask = alt->getClassMask();
                 gear.raceMask = alt->getRaceMask();
+                gear.level = alt->GetLevel();
+                for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+                    if (Item* worn = alt->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+                        gear.worn[slot] = worn->GetTemplate()->ItemLevel;
                 gear.weapons = alt->GetWeaponProficiency();
                 uint32 const armor = alt->GetArmorProficiency();
                 for (uint32 kind : {ITEM_SUBCLASS_ARMOR_PLATE, ITEM_SUBCLASS_ARMOR_MAIL, ITEM_SUBCLASS_ARMOR_LEATHER})
@@ -106,9 +143,9 @@ private:
     ObjectGuid m_owner;
 };
 
-// An alt of the team logged in, other than the bot, would wear it: a weapon it can use, or armour of the kind it
-// wears (a level too low still counts). Rings, necks, trinkets and cloaks count for nobody. From the cache, asked
-// again in the world thread every minute.
+// An upgrade for an alt of the team logged in, other than the bot: a weapon it can use or armour of the kind it
+// wears, of its level or below, with a higher item level than what it wears in that slot (an empty slot too).
+// Rings, necks, trinkets and cloaks count for nobody. From the cache, asked again in the world thread every minute.
 bool TeamWouldWear(Player* bot, Player* master, ItemTemplate const* proto)
 {
     if (!bot || !master)
@@ -147,8 +184,13 @@ bool TeamWouldWear(Player* bot, Player* master, ItemTemplate const* proto)
         // As Player::CanUseItem: its class and race, its weapon skill.
         if (!(proto->AllowableClass & alt.classMask) || !(proto->AllowableRace & alt.raceMask))
             continue;
-        if (armor ? proto->SubClass == alt.armor : (alt.weapons & (1 << proto->SubClass)) != 0)
-            return true;
+        if (!(armor ? proto->SubClass == alt.armor : (alt.weapons & (1 << proto->SubClass)) != 0))
+            continue;
+        if (proto->RequiredLevel > alt.level)
+            continue;
+        for (uint8 slot : SlotsOf(proto->InventoryType))
+            if (proto->ItemLevel > alt.worn[slot])
+                return true;
     }
     return false;
 }
@@ -278,7 +320,7 @@ bool IsJunkToDisenchant(PlayerbotAI* botAI, Item* item, uint32 maxSkill, bool ba
     Team const team = TeamOf(botAI);
     if (!WithinLimits(team, proto, bank) || !IsJunkTemplate(botAI, proto, maxSkill))
         return false;
-    // Bind on equip, still unbound: kept for an alt of the team who would wear it, unless the player allows it.
+    // Bind on equip, still unbound: kept for an alt of the team it is an upgrade for, unless the player allows it.
     if (!(team.limits & LIMIT_WEARABLE) && proto->Bonding == BIND_WHEN_EQUIPPED && !item->IsSoulBound() &&
         TeamWouldWear(botAI->GetBot(), botAI->GetMaster(), proto))
         return false;
@@ -322,6 +364,12 @@ bool KeepFromVendor(PlayerbotAI* botAI, Item* item)
     bool const self = team.enchanter == botAI->GetBot()->GetGUID().GetCounter();
     if (!self && item->IsSoulBound())
         return false;
+    // An upgrade for an alt of the team stays in the bags, neither sold nor disenchanted.
+    ItemTemplate const* proto = item->GetTemplate();
+    if (!(team.limits & LIMIT_WEARABLE) && proto->Bonding == BIND_WHEN_EQUIPPED && !item->IsSoulBound() &&
+        (proto->Class == ITEM_CLASS_ARMOR || proto->Class == ITEM_CLASS_WEAPON) &&
+        TeamWouldWear(botAI->GetBot(), botAI->GetMaster(), proto))
+        return true;
     return IsJunkToDisenchant(botAI, item, self ? 0 : EnchantingOf(team.enchanter));
 }
 

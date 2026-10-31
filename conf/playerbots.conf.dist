@@ -1852,8 +1852,8 @@ AiPlayerbot.AltChatToAddon = 1
 # the enchanter takes them out of that tab only near the vault). The ranks need
 # the deposit and withdraw rights of the tab. Without an enchanter named nothing changes. 0 turns it all off.
 # What it may disenchant is the player's choice ("alt enchanter limit altgreens|bankgreens|blues|wearable on|off",
-# Team settings in the addon): by default only the greens of the alts, never one an alt of the team could wear,
-# never anything out of the guild bank, never an epic.
+# Team settings in the addon): by default only the greens of the alts, never one that is an upgrade for an alt
+# of the team (kept, not sold), never anything out of the guild bank, never an epic.
 # Default: 1 (enabled)
 AiPlayerbot.AltDisenchant = 1
 
@@ -1867,7 +1867,7 @@ AiPlayerbot.GuildBankDeposit.Enable = 1
 # Items to deposit, separated by commas: an item class or class:subclass (7 = trade goods, 7:9 = herbs),
 # or tradegoods, cloth, leather, ore, herb, meat, elemental, enchanting, parts, gems, reagents, recipes, boe,
 # consumables. Empty = gold only.
-# (boe = bind-on-equip gear, green or better, the bot cannot wear).
+# (boe = bind-on-equip gear: greens the bot cannot wear, blues and epics unless an upgrade for the bot).
 # Default: ore,herb,leather,cloth,boe
 AiPlayerbot.GuildBankDeposit.Items = "ore,herb,leather,cloth,boe"
 
