@@ -13,7 +13,9 @@
 #include "GridDefines.h"
 #include "PlayerbotAIConfig.h"
 #include <boost/functional/hash.hpp>
+#include <deque>
 #include <map>
+#include <mutex>
 #include <random>
 
 class Creature;
@@ -883,14 +885,17 @@ public:
     bool SelectAuctioneerByMap(Player* bot, NpcLocation& outAuctioneer);
     std::vector<WorldLocation> const& GetLocsPerLevelCache(uint8 level) { return locsPerLevelCache[level]; }
 
-    // Herbs and mining veins of the world, grouped by 200-yard cell, for the gathering missions of the alts.
+    // Herbs and mining veins of the world, grouped by 200-yard cell, for the gathering missions of the alts; the
+    // beasts to skin and the fishing pools too (2.8.4).
     struct GatherPoint
     {
         float x;
         float y;
         float z;
         uint32 reqSkill;
-        uint32 entry;               // the gameobject of the node
+        uint32 entry;               // the gameobject of the node; skinning: the creature
+        uint32 level = 0;           // skinning: the creature's level
+        uint32 areaId = 0;          // fishing: the area of the water, whose fishing loot it gives
     };
 
     struct GatherCell
@@ -914,10 +919,13 @@ public:
     GatherCell const* SelectGatherCell(Player* bot, uint32 skillId, uint32 skillValue,
                                        GatherCell const* exclude = nullptr,
                                        std::set<uint32> const* nodes = nullptr) const;
-    // The herb and ore nodes whose loot has this item, with their profession and the lowest skill they need.
+    // The herb and ore nodes whose loot has this item, with their profession and the lowest skill they need; else the
+    // beasts whose skin gives it (creature entries), else the waters where it is fished (fishing pools and area ids).
     static std::set<uint32> NodesYielding(uint32 itemId, uint32& skillId, uint32& reqSkill);
     // The cell whose anchor point is (x, y), to resume a saved mission.
     GatherCell const* FindGatherCell(uint32 mapId, uint32 skillId, float x, float y) const;
+    // A fishing cell of one point, for water found next to the bot where no pool is known; kept until the restart.
+    GatherCell const* AddFishingCell(uint32 mapId, uint32 zoneId, float x, float y, float z);
 
     template <class D, class W, class URBG>
     void weighted_shuffle(D first, D last, W first_weight, W last_weight, URBG&& g)
@@ -1039,6 +1047,9 @@ private:
     std::unordered_map<uint32, std::vector<WorldLocation>> creatureSpawnsByTemplate;
     std::map<uint32, LevelBracket> zone2LevelBracket;
     std::vector<GatherCell> gatherCells;
+    // AddFishingCell: a deque, so that the cells already given never move.
+    std::deque<GatherCell> extraGatherCells;
+    mutable std::mutex extraGatherLock;
 };
 
 #define sTravelMgr TravelMgr::instance()

@@ -16,6 +16,9 @@ extern const uint32 FISHING_SPELL;
 extern const uint32 FISHING_POLE;
 extern const uint32 FISHING_BOBBER;
 
+// The water level at (x, y) where a bobber floats, or the ground of a dry or shallow spot (checkForLand);
+// INVALID_HEIGHT otherwise.
+float HasFishableWaterOrLand(float x, float y, float z, Map* map, uint32 phaseMask, bool checkForLand = false);
 WorldPosition FindWaterRadial(Player* bot, float x, float y, float z, Map* map, uint32 phaseMask, float minDistance,
                               float maxDistance, float increment, bool checkLOS = false, int numDirections = 16);
 

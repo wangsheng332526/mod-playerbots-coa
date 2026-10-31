@@ -24,9 +24,9 @@ class Player;
 class PlayerbotAI;
 
 // Gathering missions of the alts: a player's own character, played as a bot, leaves the group, gathers herbs or
-// ore in a zone of its level on its continent, then mails what it gathered to its owner.
-// Whispered commands (CoaMissionAction): "mission gather [minutes] [mining|herbalism]", "mission status",
-// "mission stop". Random bots never get one.
+// ore, skins beasts or fishes (2.8.4) in a zone of its level on its continent, then mails what it gathered to its owner.
+// Whispered commands (CoaMissionAction): "mission gather [minutes] [mining|herbalism|skinning|fishing]",
+// "mission status", "mission stop". Random bots never get one.
 enum class CoaMissionState : uint8
 {
     Travel = 1,   // walking to the gathering spot
@@ -38,7 +38,7 @@ struct CoaMission
 {
     // Saved (V1.1: a mission resumes when the alt logs in again, after a restart too)
     ObjectGuid::LowType owner = 0;  // the real player whose character this is
-    uint32 skillId = 0;             // SKILL_MINING or SKILL_HERBALISM
+    uint32 skillId = 0;             // SKILL_MINING, SKILL_HERBALISM, SKILL_SKINNING or SKILL_FISHING
     CoaMissionState state = CoaMissionState::Travel;
     int32 remainingMs = 0;          // counts only while the alt is logged in
     uint32 totalMinutes = 0;
@@ -73,8 +73,18 @@ struct CoaMission
     uint32 emptyPoints = 0;
     uint32 travelFails = 0;         // trips to a spot that made no progress
     uint32 lastMailMs = 0;
-    uint32 lootClockMs = 0;         // start (or resume) of the mission: "nothing gathered for long" counts from it         // spawn points reached in a row with no node up
+    uint32 lootClockMs = 0;         // start (or resume) of the mission: "nothing gathered for long" counts from it
     std::set<ObjectGuid> skippedNodes;
+    // Fishing: the shore it fishes from, since when, its casts there; the weapons it held before the pole.
+    bool fishSpot = false;
+    float fishX = 0.0f;
+    float fishY = 0.0f;
+    float fishZ = 0.0f;
+    uint32 fishSinceMs = 0;
+    uint32 casts = 0;
+    uint32 lastCastMs = 0;
+    ObjectGuid weapon;
+    ObjectGuid offhand;
 
     // Kept by the loot hook only: what the mission gathered, the only items it ever mails.
     std::map<uint32, uint32> items;
@@ -121,6 +131,8 @@ public:
     static void ApplyEngineStrategies(Engine* nonCombatEngine, bool bench = false);
     bool IsBench(Player* bot) const;
     static uint32 ReadStrategyFlags(PlayerbotAI* botAI);
+    // Equips an item of the bags, as the client would.
+    static void EquipItem(Player* bot, Item* item, uint8 slot);
 
     void Save(Player* bot);
     // High Risk: mails now what was gathered so far; the mission goes on.

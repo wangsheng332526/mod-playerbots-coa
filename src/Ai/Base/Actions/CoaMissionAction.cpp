@@ -6,12 +6,17 @@
 
 #include "CoaMissionAction.h"
 
+#include "AttackAction.h"
+#include "Bag.h"
 #include "CoaMissionMgr.h"
+#include "Creature.h"
 #include "DBCStores.h"
 #include "Event.h"
+#include "FishingAction.h"
 #include "GameObject.h"
 #include "LFGMgr.h"
 #include "LootObjectStack.h"
+#include "Map.h"
 #include "ObjectMgr.h"
 #include "PlayerbotAIConfig.h"
 #include "Playerbots.h"
@@ -20,6 +25,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <set>
 #include <sstream>
 
@@ -40,6 +46,58 @@ bool HasMiningPick(Player* bot)
     return false;
 }
 
+// The knives LootObject::IsLootPossible accepts for a corpse to skin.
+bool HasSkinningKnife(Player* bot)
+{
+    for (uint32 knife : {7005u, 12709u, 19901u, 40772u, 40893u})
+        if (bot->HasItemCount(knife, 1))
+            return true;
+    return false;
+}
+
+bool IsFishingPole(Item* item)
+{
+    ItemTemplate const* proto = item ? item->GetTemplate() : nullptr;
+    return proto && proto->Class == ITEM_CLASS_WEAPON && proto->SubClass == ITEM_SUBCLASS_WEAPON_FISHING_POLE;
+}
+
+// A fishing pole in its hands or its bags.
+Item* FindFishingPole(Player* bot)
+{
+    if (Item* held = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND); IsFishingPole(held))
+        return held;
+    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        if (Item* item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot); IsFishingPole(item))
+            return item;
+    for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+        if (Bag* bag = bot->GetBagByPos(bagSlot))
+            for (uint32 slot = 0; slot < bag->GetBagSize(); ++slot)
+                if (Item* item = bag->GetItemByPos(uint8(slot)); IsFishingPole(item))
+                    return item;
+    return nullptr;
+}
+
+// The highest rank of Fishing it knows: a higher rank replaces the lower ones in the spell book.
+uint32 FishingSpellOf(Player* bot)
+{
+    for (uint32 spell : {51294u, 33095u, 18248u, 7732u, 7731u, 7620u})
+        if (bot->HasSpell(spell))
+            return spell;
+    return 0;
+}
+
+// The Skinning a corpse of this level asks for (as LootObject reads it).
+uint32 SkinningSkillFor(uint32 level) { return level < 10 ? 1 : level < 20 ? (level - 10) * 10 : level * 5; }
+
+// AttackAction::Attack for the mission: the target is set, the combat strategies do the rest.
+class MissionAttackAction : public AttackAction
+{
+public:
+    MissionAttackAction(PlayerbotAI* botAI) : AttackAction(botAI, "mission attack") {}
+
+    bool Start(Unit* target) { return Attack(target); }
+};
+
 uint32 SkillOf(Player* bot, uint32 skillId) { return bot->HasSkill(skillId) ? bot->GetSkillValue(skillId) : 0; }
 
 std::string ZoneNameOf(uint32 zoneId)
@@ -57,6 +115,12 @@ constexpr uint32 MAX_FAILS = 3;
 constexpr float TELEPORT_MIN_DIST = 400.0f;
 // Nothing gathered for this long, from any spot: the mission ends.
 constexpr uint32 NO_LOOT_END_MS = 20 * MINUTE * IN_MILLISECONDS;
+// Skinning: rest before the next fight below this much health or mana.
+constexpr float REST_HEALTH_PCT = 60.0f;
+constexpr float REST_MANA_PCT = 40.0f;
+// Fishing: casts with no catch before another water; time to reach the shore.
+constexpr uint32 MAX_CASTS = 6;
+constexpr uint32 SHORE_GIVE_UP_MS = 2 * MINUTE * IN_MILLISECONDS;
 }  // namespace
 
 bool CoaMissionAction::Execute(Event event)
@@ -176,8 +240,8 @@ bool CoaMissionAction::Execute(Event event)
 
     if (word == "help")
     {
-        botAI->TellMasterNoFacing("Usage: mission gather [minutes] [mining|herbalism], mission order <item> [count] "
-                                  "[minutes], mission status, mission stop");
+        botAI->TellMasterNoFacing("Usage: mission gather [minutes] [mining|herbalism|skinning|fishing], mission order "
+                                  "<item> [count] [minutes], mission status, mission stop");
         return true;
     }
 
@@ -195,6 +259,10 @@ bool CoaMissionAction::Execute(Event event)
             skillId = SKILL_MINING;
         else if (token == "herbalism" || token == "herb" || token == "herbs")
             skillId = SKILL_HERBALISM;
+        else if (token == "skinning" || token == "skin" || token == "leather")
+            skillId = SKILL_SKINNING;
+        else if (token == "fishing" || token == "fish")
+            skillId = SKILL_FISHING;
     }
 
     std::string error;
@@ -238,7 +306,7 @@ bool CoaMissionAction::Start(Player* requester, uint32 minutes, uint32 skillId, 
         orderNodes = TravelMgr::NodesYielding(orderItem, skillId, reqSkill);
         if (orderNodes.empty())
         {
-            error = "that item does not come from an ore or a herb";
+            error = "that item does not come from an ore, a herb, a beast to skin or fishing";
             return false;
         }
         if (SkillOf(bot, skillId) && SkillOf(bot, skillId) < reqSkill)
@@ -248,17 +316,29 @@ bool CoaMissionAction::Start(Player* requester, uint32 minutes, uint32 skillId, 
         }
     }
 
-    // The profession: the one asked, else the best of mining (with a pick) and herbalism. The professions of CoA's
-    // own (woodcutting...) are not gathered.
+    // The profession: the one asked, else the best of mining (with a pick) and herbalism, then skinning (with a
+    // knife), then fishing (with a pole). The professions of CoA's own (woodcutting...) are not gathered.
     bool const pick = HasMiningPick(bot);
+    bool const knife = HasSkinningKnife(bot);
+    bool const pole = FindFishingPole(bot) != nullptr;
     uint32 const mining = SkillOf(bot, SKILL_MINING);
     uint32 const herbalism = SkillOf(bot, SKILL_HERBALISM);
+    uint32 const skinning = SkillOf(bot, SKILL_SKINNING);
+    uint32 const fishing = FishingSpellOf(bot) ? SkillOf(bot, SKILL_FISHING) : 0;
     if (skillId == SKILL_MINING && !mining)
         error = "I do not know mining";
     else if (skillId == SKILL_MINING && !pick)
         error = "I have no mining pick";
     else if (skillId == SKILL_HERBALISM && !herbalism)
         error = "I do not know herbalism";
+    else if (skillId == SKILL_SKINNING && !skinning)
+        error = "I don't know skinning";
+    else if (skillId == SKILL_SKINNING && !knife)
+        error = "I have no skinning knife";
+    else if (skillId == SKILL_FISHING && !fishing)
+        error = "I don't know fishing";
+    else if (skillId == SKILL_FISHING && !pole)
+        error = "I have no fishing pole";
     else if (!skillId)
     {
         bool const canMine = mining && pick;
@@ -266,8 +346,18 @@ bool CoaMissionAction::Start(Player* requester, uint32 minutes, uint32 skillId, 
             skillId = SKILL_MINING;
         else if (herbalism)
             skillId = SKILL_HERBALISM;
+        else if (skinning && knife)
+            skillId = SKILL_SKINNING;
+        else if (fishing && pole)
+            skillId = SKILL_FISHING;
+        else if (mining)
+            error = "I have no mining pick";
+        else if (skinning)
+            error = "I have no skinning knife";
+        else if (fishing)
+            error = "I have no fishing pole";
         else
-            error = mining ? "I have no mining pick" : "I know neither mining nor herbalism";
+            error = "I know neither mining nor herbalism, nor skinning nor fishing";
     }
     if (!error.empty())
         return false;
@@ -275,6 +365,17 @@ bool CoaMissionAction::Start(Player* requester, uint32 minutes, uint32 skillId, 
     uint32 const skillValue = SkillOf(bot, skillId);
     TravelMgr::GatherCell const* cell =
         sTravelMgr.SelectGatherCell(bot, skillId, skillValue, nullptr, orderItem ? &orderNodes : nullptr);
+    // Fishing where no pool is known: the water right next to it, if the fish ordered (if any) is caught here.
+    if (!cell && skillId == SKILL_FISHING &&
+        (!orderItem || orderNodes.count(bot->GetAreaId()) || orderNodes.count(bot->GetZoneId())))
+    {
+        WorldPosition const water =
+            FindWaterRadial(bot, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetMap(),
+                            bot->GetPhaseMask(), 5.0f, 40.0f, 2.5f, false, 16);
+        if (water.IsValid())
+            cell = sTravelMgr.AddFishingCell(bot->GetMapId(), bot->GetZoneId(), water.GetPositionX(),
+                                             water.GetPositionY(), water.GetPositionZ());
+    }
     if (!cell && orderItem)
     {
         error = "I know no spot for that on this continent at my level";
@@ -282,7 +383,9 @@ bool CoaMissionAction::Start(Player* requester, uint32 minutes, uint32 skillId, 
     }
     if (!cell)
     {
-        error = "I know no " + CoaMissionMgr::SkillName(skillId) + " spot for my level and skill on this continent";
+        error = skillId == SKILL_FISHING
+                    ? "I know no fishing water for my level and skill on this continent: take me to some and ask again"
+                    : "I know no " + CoaMissionMgr::SkillName(skillId) + " spot for my level and skill on this continent";
         return false;
     }
 
@@ -562,6 +665,9 @@ bool CoaMissionUpdateAction::DoWork(CoaMission& mission, uint32 now)
     if (!cell || cell->points.empty())
         return false;
 
+    if (mission.skillId == SKILL_FISHING)
+        return DoFish(mission, now);
+
     // The loot strategy is on a node: let it gather, but not forever on one it cannot open or empty.
     if (bot->IsNonMeleeSpellCast(false))
         return false;
@@ -598,107 +704,75 @@ bool CoaMissionUpdateAction::DoWork(CoaMission& mission, uint32 now)
         return false;
     }
 
-    // The nearest node of the mission's profession in sight.
-    GameObject* best = nullptr;
-    float bestDist = 0.0f;
-    for (ObjectGuid const& guid : AI_VALUE(GuidVector, "nearest game objects no los"))
+    // Skinning: the next beast of its level, killed by the combat strategies, skinned by the loot strategy.
+    if (mission.skillId == SKILL_SKINNING)
     {
-        if (!guid.IsGameObject() || mission.skippedNodes.count(guid) ||
-            (!mission.orderNodes.empty() && !mission.orderNodes.count(guid.GetEntry())))
-            continue;
-        GameObject* go = botAI->GetGameObject(guid);
-        if (!go)
-            continue;
-        LootObject node(bot, guid);
-        if (node.IsEmpty() || node.skillId != mission.skillId || !node.IsLootPossible(bot))
-            continue;
-        // Up a cave wall or under a ledge: right next to it and still out of reach.
-        if (bot->GetExactDist2d(go) < 4.0f && std::fabs(go->GetPositionZ() - bot->GetPositionZ()) > 3.5f)
+        if (Unit* prey = FindPrey(mission))
         {
-            mission.skippedNodes.insert(guid);
-            LOG_INFO("playerbots.coa", "Mission {}: node {} (entry {}) out of reach, {:.1f} yd above", bot->GetName(),
-                     guid.GetCounter(), guid.GetEntry(), go->GetPositionZ() - bot->GetPositionZ());
-            continue;
-        }
-        float const dist = bot->GetExactDist(go);
-        if (!best || dist < bestDist)
-        {
-            best = go;
-            bestDist = dist;
-        }
-    }
-
-    if (best)
-    {
-        mission.emptyPoints = 0;
-        // A node it cannot reach in a minute (under water, up a cliff) is left for good.
-        if (best->GetGUID() != mission.node)
-        {
-            mission.node = best->GetGUID();
-            mission.nodeSinceMs = now;
-        }
-        else if (getMSTimeDiff(mission.nodeSinceMs, now) >= NODE_GIVE_UP_MS)
-        {
-            if (mission.skippedNodes.size() >= 50)
-                mission.skippedNodes.clear();
-            mission.skippedNodes.insert(mission.node);
-            mission.node.Clear();
-            return false;
-        }
-
-        if (bestDist <= sPlayerbotAIConfig.lootDistance)
-            AI_VALUE(LootObjectStack*, "available loot")->Add(best->GetGUID());
-        if (bestDist > INTERACTION_DISTANCE - 2.0f)
-            return MoveNear(best, 2.0f);
-        return false;
-    }
-
-    // Every spawn point visited with nothing up (gathered out, waiting for respawns), or
-    // nothing gathered for 10 minutes: another spot. Only a spot that never gave anything is a failure.
-    uint32 const since = std::max(mission.lastLootMs, mission.workSinceMs);
-    bool const roundDone = mission.emptyPoints >= std::max<uint32>(3, cell->points.size());
-    if (roundDone || (since && getMSTimeDiff(since, now) >= NO_NODE_MS))
-    {
-        bool const gaveLoot = mission.lastLootMs && mission.workSinceMs &&
-                              int32(mission.lastLootMs - mission.workSinceMs) >= 0;
-        // Spots that gave nothing in a row, for the log; the mission itself ends only after a long time with
-        // nothing gathered anywhere: on a busy server the bot goes from spot to spot as the nodes come back.
-        if (gaveLoot)
-            mission.fails = 0;
-        else
-            ++mission.fails;
-        uint32 const lastGather = std::max(mission.lastLootMs, mission.lootClockMs);
-        if (lastGather && getMSTimeDiff(lastGather, now) >= NO_LOOT_END_MS)
-        {
-            mission.state = CoaMissionState::Deliver;
-            mission.endReason = "I found nothing more to gather";
-            return false;
-        }
-        TravelMgr::GatherCell const* next =
-            sTravelMgr.SelectGatherCell(bot, mission.skillId, SkillOf(bot, mission.skillId), cell,
-                                        mission.orderNodes.empty() ? nullptr : &mission.orderNodes);
-        if (!next)
-        {
-            // The only spot of its level: wait there for the nodes to come back.
             mission.emptyPoints = 0;
+            return Hunt(mission, prey, now);
+        }
+    }
+    else
+    {
+        // The nearest node of the mission's profession in sight.
+        GameObject* best = nullptr;
+        float bestDist = 0.0f;
+        for (ObjectGuid const& guid : AI_VALUE(GuidVector, "nearest game objects no los"))
+        {
+            if (!guid.IsGameObject() || mission.skippedNodes.count(guid) ||
+                (!mission.orderNodes.empty() && !mission.orderNodes.count(guid.GetEntry())))
+                continue;
+            GameObject* go = botAI->GetGameObject(guid);
+            if (!go)
+                continue;
+            LootObject node(bot, guid);
+            if (node.IsEmpty() || node.skillId != mission.skillId || !node.IsLootPossible(bot))
+                continue;
+            // Up a cave wall or under a ledge: right next to it and still out of reach.
+            if (bot->GetExactDist2d(go) < 4.0f && std::fabs(go->GetPositionZ() - bot->GetPositionZ()) > 3.5f)
+            {
+                mission.skippedNodes.insert(guid);
+                LOG_INFO("playerbots.coa", "Mission {}: node {} (entry {}) out of reach, {:.1f} yd above", bot->GetName(),
+                         guid.GetCounter(), guid.GetEntry(), go->GetPositionZ() - bot->GetPositionZ());
+                continue;
+            }
+            float const dist = bot->GetExactDist(go);
+            if (!best || dist < bestDist)
+            {
+                best = go;
+                bestDist = dist;
+            }
+        }
+
+        if (best)
+        {
+            mission.emptyPoints = 0;
+            // A node it cannot reach in a minute (under water, up a cliff) is left for good.
+            if (best->GetGUID() != mission.node)
+            {
+                mission.node = best->GetGUID();
+                mission.nodeSinceMs = now;
+            }
+            else if (getMSTimeDiff(mission.nodeSinceMs, now) >= NODE_GIVE_UP_MS)
+            {
+                if (mission.skippedNodes.size() >= 50)
+                    mission.skippedNodes.clear();
+                mission.skippedNodes.insert(mission.node);
+                mission.node.Clear();
+                return false;
+            }
+
+            if (bestDist <= sPlayerbotAIConfig.lootDistance)
+                AI_VALUE(LootObjectStack*, "available loot")->Add(best->GetGUID());
+            if (bestDist > INTERACTION_DISTANCE - 2.0f)
+                return MoveNear(best, 2.0f);
             return false;
         }
-        LOG_INFO("playerbots.coa", "Mission {}: next spot ({}, {} empty points, fails {})", bot->GetName(),
-                 roundDone ? "spot gathered out" : "nothing gathered for 10 min", mission.emptyPoints, mission.fails);
-        mission.cell = next;
-        mission.mapId = next->mapId;
-        mission.x = next->x;
-        mission.y = next->y;
-        mission.z = next->z;
-        mission.zoneId = next->zoneId;
-        mission.point = 0;
-        mission.emptyPoints = 0;
-        mission.state = CoaMissionState::Travel;
-        mission.progressCheckMs = 0;
-        mission.workSinceMs = 0;
-        mission.skippedNodes.clear();
-        return false;
     }
+
+    if (LeaveSpot(mission, now))
+        return false;
 
     // Walk from spawn point to spawn point: only part of them is up at a time.
     if (mission.point >= cell->points.size())
@@ -711,4 +785,287 @@ bool CoaMissionUpdateAction::DoWork(CoaMission& mission, uint32 now)
         return false;
     }
     return MoveFarTo(WorldPosition(cell->mapId, point.x, point.y, point.z));
+}
+
+bool CoaMissionUpdateAction::LeaveSpot(CoaMission& mission, uint32 now)
+{
+    TravelMgr::GatherCell const* cell = mission.cell;
+
+    // Every spawn point visited with nothing up (gathered out, waiting for respawns), or
+    // nothing gathered for 10 minutes: another spot. Only a spot that never gave anything is a failure.
+    uint32 const since = std::max(mission.lastLootMs, mission.workSinceMs);
+    bool const roundDone = mission.emptyPoints >= std::max<uint32>(3, cell->points.size());
+    if (!roundDone && !(since && getMSTimeDiff(since, now) >= NO_NODE_MS))
+        return false;
+
+    bool const gaveLoot = mission.lastLootMs && mission.workSinceMs &&
+                          int32(mission.lastLootMs - mission.workSinceMs) >= 0;
+    // Spots that gave nothing in a row, for the log; the mission itself ends only after a long time with
+    // nothing gathered anywhere: on a busy server the bot goes from spot to spot as the nodes come back.
+    if (gaveLoot)
+        mission.fails = 0;
+    else
+        ++mission.fails;
+    uint32 const lastGather = std::max(mission.lastLootMs, mission.lootClockMs);
+    if (lastGather && getMSTimeDiff(lastGather, now) >= NO_LOOT_END_MS)
+    {
+        mission.state = CoaMissionState::Deliver;
+        mission.endReason = "I found nothing more to gather";
+        return true;
+    }
+    TravelMgr::GatherCell const* next =
+        sTravelMgr.SelectGatherCell(bot, mission.skillId, SkillOf(bot, mission.skillId), cell,
+                                    mission.orderNodes.empty() ? nullptr : &mission.orderNodes);
+    if (!next)
+    {
+        // The only spot of its level: wait there for the nodes to come back.
+        mission.emptyPoints = 0;
+        if (since && getMSTimeDiff(since, now) >= NO_NODE_MS)
+            mission.workSinceMs = now;
+        return false;
+    }
+    LOG_INFO("playerbots.coa", "Mission {}: next spot ({}, {} empty points, fails {})", bot->GetName(),
+             roundDone ? "spot gathered out" : "nothing gathered for 10 min", mission.emptyPoints, mission.fails);
+    mission.cell = next;
+    mission.mapId = next->mapId;
+    mission.x = next->x;
+    mission.y = next->y;
+    mission.z = next->z;
+    mission.zoneId = next->zoneId;
+    mission.point = 0;
+    mission.emptyPoints = 0;
+    mission.state = CoaMissionState::Travel;
+    mission.progressCheckMs = 0;
+    mission.workSinceMs = 0;
+    mission.skippedNodes.clear();
+    mission.fishSpot = false;
+    mission.casts = 0;
+    return true;
+}
+
+Unit* CoaMissionUpdateAction::FindPrey(CoaMission const& mission)
+{
+    uint32 const skill = SkillOf(bot, SKILL_SKINNING);
+    Creature* best = nullptr;
+    float bestDist = 0.0f;
+    for (ObjectGuid const& guid : AI_VALUE(GuidVector, "possible targets no los"))
+    {
+        if (!guid.IsCreature() || mission.skippedNodes.count(guid) ||
+            (!mission.orderNodes.empty() && !mission.orderNodes.count(guid.GetEntry())))
+            continue;
+        Creature* creature = botAI->GetCreature(guid);
+        if (!creature || !creature->IsAlive() || creature->isElite() || creature->isWorldBoss() ||
+            creature->GetOwnerGUID())
+            continue;
+        CreatureTemplate const* info = creature->GetCreatureTemplate();
+        if (!info || !info->SkinLootId || info->GetRequiredLootSkill() != SKILL_SKINNING)
+            continue;
+        if (creature->GetLevel() > bot->GetLevel() + 1 || SkinningSkillFor(creature->GetLevel()) > skill)
+            continue;
+        // Never one tapped or fought by someone else, nor one out of reach (in the water, on a ledge).
+        if ((creature->hasLootRecipient() && !creature->isTappedBy(bot)) ||
+            (creature->GetVictim() && creature->GetVictim() != bot))
+            continue;
+        if (creature->IsInWater() || std::fabs(creature->GetPositionZ() - bot->GetPositionZ()) > 10.0f)
+            continue;
+        if (!bot->IsValidAttackTarget(creature))
+            continue;
+        float const dist = bot->GetExactDist(creature);
+        if (!best || dist < bestDist)
+        {
+            best = creature;
+            bestDist = dist;
+        }
+    }
+    return best;
+}
+
+bool CoaMissionUpdateAction::Hunt(CoaMission& mission, Unit* prey, uint32 now)
+{
+    // Rested first: the next fight starts with enough health and mana; eating and drinking are the bot's own.
+    if (bot->GetHealthPct() < REST_HEALTH_PCT ||
+        (bot->getPowerType() == POWER_MANA && bot->GetMaxPower(POWER_MANA) && bot->GetPowerPct(POWER_MANA) < REST_MANA_PCT))
+        return false;
+
+    // A beast it cannot get to fight in two minutes (evading, out of reach) is left for good.
+    if (prey->GetGUID() != mission.node)
+    {
+        mission.node = prey->GetGUID();
+        mission.nodeSinceMs = now;
+    }
+    else if (getMSTimeDiff(mission.nodeSinceMs, now) >= 2 * NODE_GIVE_UP_MS)
+    {
+        if (mission.skippedNodes.size() >= 50)
+            mission.skippedNodes.clear();
+        mission.skippedNodes.insert(mission.node);
+        LOG_INFO("playerbots.coa", "Mission {}: beast {} (entry {}) left, not fought in two minutes", bot->GetName(),
+                 prey->GetGUID().GetCounter(), prey->GetEntry());
+        mission.node.Clear();
+        return false;
+    }
+
+    if (bot->GetExactDist(prey) > 30.0f || !bot->IsWithinLOSInMap(prey))
+        return MoveNear(prey, 5.0f);
+    MissionAttackAction attack(botAI);
+    return attack.Start(prey);
+}
+
+// A dry spot 11 to 17 yards from the water (x, y, z), in sight of it, the nearest to the bot.
+bool CoaMissionUpdateAction::FindShore(CoaMission& mission, float wx, float wy, float wz)
+{
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
+    uint32 const phase = bot->GetPhaseMask();
+    bool found = false;
+    float bestDist = 0.0f;
+    for (float dist = 11.0f; dist <= 17.0f && !found; dist += 2.0f)
+        for (int i = 0; i < 24; ++i)
+        {
+            float const angle = 2.0f * float(M_PI) * i / 24.0f;
+            float const x = wx + std::cos(angle) * dist;
+            float const y = wy + std::sin(angle) * dist;
+            float const ground = HasFishableWaterOrLand(x, y, wz, map, phase, true);
+            if (ground == INVALID_HEIGHT || std::fabs(ground - wz) > 6.0f)
+                continue;
+            if (!map->isInLineOfSight(x, y, ground + 2.0f, wx, wy, wz + 0.5f, phase, LINEOFSIGHT_ALL_CHECKS,
+                                      VMAP::ModelIgnoreFlags::Nothing))
+                continue;
+            float const fromBot = bot->GetExactDist2d(x, y);
+            if (!found || fromBot < bestDist)
+            {
+                found = true;
+                bestDist = fromBot;
+                mission.fishX = x;
+                mission.fishY = y;
+                mission.fishZ = ground;
+            }
+        }
+    return found;
+}
+
+bool CoaMissionUpdateAction::DoFish(CoaMission& mission, uint32 now)
+{
+    TravelMgr::GatherCell const* cell = mission.cell;
+    uint32 const spell = FishingSpellOf(bot);
+    if (!spell)
+    {
+        mission.state = CoaMissionState::Deliver;
+        mission.endReason = "I know fishing no more";
+        return false;
+    }
+
+    // A bite: the line is pulled in at once, the catch comes as any loot.
+    GameObject* bobber = bot->GetGameObject(spell);
+    if (!bobber)
+        for (ObjectGuid const& guid : AI_VALUE(GuidVector, "nearest game objects no los"))
+            if (GameObject* go = botAI->GetGameObject(guid))
+                if (go->GetGoType() == GAMEOBJECT_TYPE_FISHINGNODE && go->GetOwnerGUID() == bot->GetGUID())
+                {
+                    bobber = go;
+                    break;
+                }
+    if (bobber && bobber->GetGoType() == GAMEOBJECT_TYPE_FISHINGNODE && bobber->getLootState() == GO_READY)
+    {
+        bobber->Use(bot);
+        return true;
+    }
+    if (bot->IsNonMeleeSpellCast(false))
+        return false;
+    // A catch left open: closed after a while, so that it fishes again.
+    if (ObjectGuid const looting = bot->GetLootGUID())
+    {
+        if (looting != mission.node)
+        {
+            mission.node = looting;
+            mission.nodeSinceMs = now;
+        }
+        else if (getMSTimeDiff(mission.nodeSinceMs, now) >= 15 * IN_MILLISECONDS)
+        {
+            bot->GetSession()->DoLootRelease(looting);
+            mission.node.Clear();
+        }
+        return false;
+    }
+
+    if (LeaveSpot(mission, now))
+        return false;
+
+    if (mission.point >= cell->points.size())
+        mission.point = 0;
+    TravelMgr::GatherPoint const& water = cell->points[mission.point];
+    auto nextWater = [&]()
+    {
+        mission.fishSpot = false;
+        mission.casts = 0;
+        mission.point = (mission.point + 1) % cell->points.size();
+        ++mission.emptyPoints;
+    };
+
+    if (!mission.fishSpot)
+    {
+        // The shore is looked for from close by: the ground of a far place is not loaded.
+        if (bot->GetMapId() != cell->mapId || bot->GetExactDist2d(water.x, water.y) > 60.0f)
+            return MoveFarTo(WorldPosition(cell->mapId, water.x, water.y, water.z));
+        if (!FindShore(mission, water.x, water.y, water.z))
+        {
+            LOG_INFO("playerbots.coa", "Mission {}: no shore found by the water {} of the spot", bot->GetName(),
+                     mission.point);
+            nextWater();
+            return false;
+        }
+        mission.fishSpot = true;
+        mission.fishSinceMs = now;
+        mission.casts = 0;
+    }
+
+    if (bot->GetExactDist(mission.fishX, mission.fishY, mission.fishZ) > 3.0f)
+    {
+        if (getMSTimeDiff(mission.fishSinceMs, now) >= SHORE_GIVE_UP_MS)
+        {
+            nextWater();
+            return false;
+        }
+        return MoveTo(cell->mapId, mission.fishX, mission.fishY, mission.fishZ);
+    }
+    mission.fishSinceMs = now;
+
+    // Casts with no catch since: no water where the bobber falls after all.
+    if (mission.lastLootMs && mission.lastCastMs && int32(mission.lastLootMs - mission.lastCastMs) >= 0)
+        mission.casts = 0;
+    if (mission.casts >= MAX_CASTS)
+    {
+        LOG_INFO("playerbots.coa", "Mission {}: {} casts with no catch, next water", bot->GetName(), mission.casts);
+        nextWater();
+        return false;
+    }
+
+    // The pole in hand; the weapons it held go back at the end of the mission.
+    Item* const mainHand = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
+    if (!IsFishingPole(mainHand))
+    {
+        Item* pole = FindFishingPole(bot);
+        if (!pole)
+        {
+            mission.state = CoaMissionState::Deliver;
+            mission.endReason = "I have no fishing pole any more";
+            return false;
+        }
+        Item* const offHand = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_OFFHAND);
+        mission.weapon = mainHand ? mainHand->GetGUID() : ObjectGuid::Empty;
+        mission.offhand = offHand ? offHand->GetGUID() : ObjectGuid::Empty;
+        CoaMissionMgr::EquipItem(bot, pole, EQUIPMENT_SLOT_MAINHAND);
+        return true;
+    }
+
+    if (bot->isMoving())
+    {
+        bot->StopMoving();
+        return true;
+    }
+    // Facing the water: the bobber falls 10 to 20 yards in front.
+    bot->SetFacingTo(bot->GetAngle(water.x, water.y));
+    ++mission.casts;
+    mission.lastCastMs = now;
+    return botAI->CastSpell(spell, bot);
 }

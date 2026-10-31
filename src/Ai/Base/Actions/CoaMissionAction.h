@@ -11,9 +11,11 @@
 #include "NewRpgBaseAction.h"
 
 class PlayerbotAI;
+class Unit;
 struct CoaMission;
 
-// "mission gather [minutes] [mining|herbalism]", "mission status", "mission stop", whispered to an alt by its owner.
+// "mission gather [minutes] [mining|herbalism|skinning|fishing]", "mission status", "mission stop", whispered to an
+// alt by its owner.
 class CoaMissionAction : public Action
 {
 public:
@@ -40,6 +42,13 @@ public:
 private:
     bool DoTravel(CoaMission& mission, uint32 now);
     bool DoWork(CoaMission& mission, uint32 now);
+    // Skinning: the beast to kill next, and the fight itself, left to the combat strategies.
+    Unit* FindPrey(CoaMission const& mission);
+    bool Hunt(CoaMission& mission, Unit* prey, uint32 now);
+    bool DoFish(CoaMission& mission, uint32 now);
+    bool FindShore(CoaMission& mission, float wx, float wy, float wz);
+    // The spot is done (gathered out, or nothing for long): another one, or the end. true when it decided.
+    bool LeaveSpot(CoaMission& mission, uint32 now);
     void TeleportToSpot(CoaMission const& mission);
 };
 
