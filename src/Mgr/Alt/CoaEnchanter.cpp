@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <ctime>
 #include <memory>
 #include <mutex>
@@ -177,6 +178,18 @@ bool IsJunkTemplate(PlayerbotAI* botAI, ItemTemplate const* proto, uint32 maxSki
 
 namespace CoaEnchanter
 {
+// The player's limits for one item: a green from the alts or out of the bank, a blue bind on equip one; never more.
+bool WithinLimits(Team const& team, ItemTemplate const* proto, bool bank)
+{
+    if (!proto)
+        return false;
+    if (proto->Quality == ITEM_QUALITY_RARE)
+        return (team.limits & LIMIT_BLUES) && proto->Bonding == BIND_WHEN_EQUIPPED;
+    if (proto->Quality == ITEM_QUALITY_UNCOMMON)
+        return (team.limits & (bank ? LIMIT_BANK_GREENS : LIMIT_ALT_GREENS)) != 0;
+    return false;
+}
+
 Team Of(ObjectGuid::LowType owner)
 {
     Team team;
@@ -186,7 +199,12 @@ Team Of(ObjectGuid::LowType owner)
     std::string const data = sRandomPlayerbotMgr.GetData(owner, TEAM_KEY);
     size_t const split = data.find(';');
     team.mode = data.compare(0, split, "1") == 0 ? MODE_BANK : MODE_MAIL;
-    team.name = split == std::string::npos ? "" : data.substr(split + 1);
+    // "<mode>;<name>;<limits>" (no limits: the defaults).
+    size_t const second = split == std::string::npos ? std::string::npos : data.find(';', split + 1);
+    team.name = split == std::string::npos ? "" : data.substr(split + 1, second == std::string::npos ? std::string::npos
+                                                                                                     : second - split - 1);
+    if (second != std::string::npos)
+        team.limits = uint32(std::strtoul(data.c_str() + second + 1, nullptr, 10)) & 0xF;
     // A mode chosen before any enchanter is stored with no name (value 0 would delete the row).
     if (team.name.empty())
         team.enchanter = 0;
@@ -195,10 +213,11 @@ Team Of(ObjectGuid::LowType owner)
 
 void Set(ObjectGuid::LowType owner, Team const& team)
 {
-    // The value is the enchanter's guid; a player who chose a mode before naming one stores 1 with no name.
-    uint32 const value = team.enchanter ? team.enchanter : (team.mode == MODE_BANK ? 1 : 0);
+    // The value is the enchanter's guid; with none named, 1 and no name (0 would delete the mode and the limits).
+    uint32 const value = team.enchanter ? team.enchanter : 1;
     sRandomPlayerbotMgr.SetPermanentValue(owner, TEAM_KEY, value,
-                                          std::to_string(team.mode) + ";" + (team.enchanter ? team.name : ""));
+                                          std::to_string(team.mode) + ";" + (team.enchanter ? team.name : "") + ";" +
+                                              std::to_string(team.limits));
 }
 
 Team TeamOf(PlayerbotAI* botAI)
@@ -206,12 +225,14 @@ Team TeamOf(PlayerbotAI* botAI)
     if (!sPlayerbotAIConfig.altDisenchant || !botAI || !botAI->IsAltBot() || !botAI->GetMaster())
         return Team();
     Team team = Of(botAI->GetMaster()->GetGUID().GetCounter());
-    // The bank mode works on the configured tab only: none, by mail.
+    // The bank mode works on the configured tab only: none, by mail. Nothing allowed out of the bank: by mail too.
     if (team.mode == MODE_BANK && !sPlayerbotAIConfig.guildBankDepositTab)
     {
         team.mode = MODE_MAIL;
         team.bankWithoutTab = true;
     }
+    if (team.mode == MODE_BANK && !(team.limits & (LIMIT_BANK_GREENS | LIMIT_BLUES)))
+        team.mode = MODE_MAIL;
     return team;
 }
 
@@ -249,15 +270,16 @@ bool IsEnchantingMaterial(ItemTemplate const* proto)
     return proto && proto->Class == ITEM_CLASS_TRADE_GOODS && proto->SubClass == ITEM_SUBCLASS_ENCHANTING;
 }
 
-bool IsJunkToDisenchant(PlayerbotAI* botAI, Item* item, uint32 maxSkill)
+bool IsJunkToDisenchant(PlayerbotAI* botAI, Item* item, uint32 maxSkill, bool bank)
 {
     if (!botAI || !item || item->IsEquipped() || item->IsInTrade())
         return false;
     ItemTemplate const* proto = item->GetTemplate();
-    if (!IsJunkTemplate(botAI, proto, maxSkill))
+    Team const team = TeamOf(botAI);
+    if (!WithinLimits(team, proto, bank) || !IsJunkTemplate(botAI, proto, maxSkill))
         return false;
-    // Bind on equip, still unbound: kept for an alt of the team who would wear it.
-    if (proto->Bonding == BIND_WHEN_EQUIPPED && !item->IsSoulBound() &&
+    // Bind on equip, still unbound: kept for an alt of the team who would wear it, unless the player allows it.
+    if (!(team.limits & LIMIT_WEARABLE) && proto->Bonding == BIND_WHEN_EQUIPPED && !item->IsSoulBound() &&
         TeamWouldWear(botAI->GetBot(), botAI->GetMaster(), proto))
         return false;
     return true;
@@ -265,8 +287,10 @@ bool IsJunkToDisenchant(PlayerbotAI* botAI, Item* item, uint32 maxSkill)
 
 bool IsJunkTemplateForEnchanter(PlayerbotAI* botAI, ItemTemplate const* proto, uint32 maxSkill)
 {
-    return IsJunkTemplate(botAI, proto, maxSkill) &&
-           !(proto->Bonding == BIND_WHEN_EQUIPPED && TeamWouldWear(botAI->GetBot(), botAI->GetMaster(), proto));
+    Team const team = TeamOf(botAI);
+    return WithinLimits(team, proto, true) && IsJunkTemplate(botAI, proto, maxSkill) &&
+           ((team.limits & LIMIT_WEARABLE) ||
+            !(proto->Bonding == BIND_WHEN_EQUIPPED && TeamWouldWear(botAI->GetBot(), botAI->GetMaster(), proto)));
 }
 
 int32 DepositRule(PlayerbotAI* botAI, Item const* item)
@@ -282,7 +306,9 @@ int32 DepositRule(PlayerbotAI* botAI, Item const* item)
             return 1;
         return IsJunkToDisenchant(botAI, bagItem, 0) ? 0 : -1;
     }
-    if (item->IsSoulBound() || !IsJunkToDisenchant(botAI, bagItem, EnchantingOf(team.enchanter)))
+    // By the bank, it has to be allowed out of the bank too.
+    if (item->IsSoulBound() || !IsJunkToDisenchant(botAI, bagItem, EnchantingOf(team.enchanter)) ||
+        (team.mode == MODE_BANK && !IsJunkToDisenchant(botAI, bagItem, EnchantingOf(team.enchanter), true)))
         return -1;
     // By the guild bank: in it, for the enchanter. By mail: kept for the mail.
     return team.mode == MODE_BANK ? 1 : 0;
@@ -320,7 +346,7 @@ void SendStatus(PlayerbotAI* botAI)
     out << "ENCH\t" << (team.name.empty() ? "-" : CoaAltAddon::Field(team.name, 24)) << "\t"
         << (team.mode == MODE_BANK ? "bank" : "mail") << "\t"
         << (bot->HasSkill(SKILL_ENCHANTING) ? bot->GetSkillValue(SKILL_ENCHANTING) : 0) << "\t"
-        << (sPlayerbotAIConfig.altDisenchant ? 1 : 0);
+        << (sPlayerbotAIConfig.altDisenchant ? 1 : 0) << "\t" << team.limits;
     CoaAltAddon::SendToMaster(botAI, out.str());
 }
 
@@ -368,8 +394,22 @@ std::string Command(PlayerbotAI* botAI, Player* master, std::string const& arg)
             return "Usage: alt enchanter mode mail|bank";
         team.mode = mode == "bank" ? MODE_BANK : MODE_MAIL;
     }
+    else if (word == "limit")
+    {
+        std::string key;
+        std::string state;
+        in >> key >> state;
+        uint32 const bit = key == "altgreens"    ? LIMIT_ALT_GREENS
+                           : key == "bankgreens" ? LIMIT_BANK_GREENS
+                           : key == "blues"      ? LIMIT_BLUES
+                           : key == "wearable"   ? LIMIT_WEARABLE
+                                                 : 0;
+        if (!bit || (state != "on" && state != "off"))
+            return "Usage: alt enchanter limit altgreens|bankgreens|blues|wearable on|off";
+        team.limits = state == "on" ? (team.limits | bit) : (team.limits & ~bit);
+    }
     else if (!word.empty() && word != "status")
-        return "Usage: alt enchanter [set <name>|clear|mode mail|mode bank]";
+        return "Usage: alt enchanter [set <name>|clear|mode mail|mode bank|limit <key> on|off]";
 
     if (!word.empty() && word != "status")
         Set(owner, team);
@@ -383,6 +423,8 @@ std::string Command(PlayerbotAI* botAI, Player* master, std::string const& arg)
     std::string how = team.mode == MODE_BANK ? "through the guild bank" : "by mail";
     if (team.mode == MODE_BANK && !sPlayerbotAIConfig.guildBankDepositTab)
         how += " (not before the server sets AiPlayerbot.GuildBankDeposit.Tab: by mail meanwhile)";
+    else if (team.mode == MODE_BANK && !(team.limits & (LIMIT_BANK_GREENS | LIMIT_BLUES)))
+        how += " (nothing allowed out of the bank in the limits: by mail meanwhile)";
     else if (team.mode == MODE_BANK)
         how += " (tab " + std::to_string(sPlayerbotAIConfig.guildBankDepositTab) + ")";
     if (!team.enchanter)

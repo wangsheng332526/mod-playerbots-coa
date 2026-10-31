@@ -1851,6 +1851,9 @@ AiPlayerbot.AltChatToAddon = 1
 # ("alt enchanter mode bank": the alts put them in AiPlayerbot.GuildBankDeposit.Tab, which the bank mode needs, and
 # the enchanter takes them out of that tab only near the vault). The ranks need
 # the deposit and withdraw rights of the tab. Without an enchanter named nothing changes. 0 turns it all off.
+# What it may disenchant is the player's choice ("alt enchanter limit altgreens|bankgreens|blues|wearable on|off",
+# Team settings in the addon): by default only the greens of the alts, never one an alt of the team could wear,
+# never anything out of the guild bank, never an epic.
 # Default: 1 (enabled)
 AiPlayerbot.AltDisenchant = 1
 

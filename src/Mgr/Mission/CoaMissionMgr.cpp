@@ -437,8 +437,8 @@ uint32 CoaMissionMgr::MailItems(Player* bot, ObjectGuid::LowType to, std::map<ui
 
     ObjectGuid const toGuid = ObjectGuid::Create<HighGuid::Player>(to);
     // On the bot's map (this thread's), or not logged in: at once.
-    if (Player* near = ObjectAccessor::GetPlayer(*bot, toGuid))
-        return SendItemsNow(bot, to, items, subject, body, near);
+    if (Player* sameMap = ObjectAccessor::GetPlayer(*bot, toGuid))
+        return SendItemsNow(bot, to, items, subject, body, sameMap);
     if (!ObjectAccessor::FindConnectedPlayer(toGuid))
         return SendItemsNow(bot, to, items, subject, body, nullptr);
 

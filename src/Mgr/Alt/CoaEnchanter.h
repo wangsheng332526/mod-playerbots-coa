@@ -28,11 +28,19 @@ constexpr uint32 MODE_MAIL = 0;
 constexpr uint32 MODE_BANK = 1;
 constexpr uint32 DISENCHANT_SPELL = 13262;
 
+// What the player lets the enchanter disenchant ("alt enchanter limit <key> on|off"). Epics: never.
+constexpr uint32 LIMIT_ALT_GREENS = 0x1;   // altgreens: the greens of the alts' bags (its own too)
+constexpr uint32 LIMIT_BANK_GREENS = 0x2;  // bankgreens: greens out of the guild bank
+constexpr uint32 LIMIT_BLUES = 0x4;        // blues: blue bind on equip gear, from the alts and the bank
+constexpr uint32 LIMIT_WEARABLE = 0x8;     // wearable: even gear an alt of the team could wear
+constexpr uint32 LIMITS_DEFAULT = LIMIT_ALT_GREENS;
+
 struct Team
 {
     ObjectGuid::LowType enchanter = 0;  // 0: none named
     uint32 mode = MODE_MAIL;
     std::string name;
+    uint32 limits = LIMITS_DEFAULT;
     // TeamOf: the bank mode was chosen, but no guild bank tab is configured (AiPlayerbot.GuildBankDeposit.Tab):
     // the greens go by mail meanwhile.
     bool bankWithoutTab = false;
@@ -42,16 +50,17 @@ struct Team
 Team Of(ObjectGuid::LowType owner);
 void Set(ObjectGuid::LowType owner, Team const& team);
 
-// The team of an alt: its master's choice, the mode as it works (by mail while no tab is configured); empty when
-// AltDisenchant is off or the bot is no alt.
+// The team of an alt: its master's choice, the mode as it works (by mail while no tab is configured, or while the
+// limits let nothing out of the bank); empty when AltDisenchant is off or the bot is no alt.
 Team TeamOf(PlayerbotAI* botAI);
 bool IsEnchanter(PlayerbotAI* botAI);
 // Enchanting of a character, logged in or not.
 uint32 EnchantingOf(ObjectGuid::LowType guid);
 
-// Green or blue gear of its bags (never epic) that goes to the enchanter: disenchantable (at most maxSkill, 0 = any), no use
-// to the bot itself (as "s junk" judges it), and none an alt of the team logged in could wear (bind on equip).
-bool IsJunkToDisenchant(PlayerbotAI* botAI, Item* item, uint32 maxSkill = 0);
+// Gear of its bags that goes to the enchanter: within the player's limits (greens, blue bind on equip, never epic),
+// disenchantable (at most maxSkill, 0 = any), no use to the bot itself (as "s junk" judges it), and unless the player
+// allows it none an alt of the team logged in could wear. bank: on its way through the guild bank.
+bool IsJunkToDisenchant(PlayerbotAI* botAI, Item* item, uint32 maxSkill = 0, bool bank = false);
 bool IsEnchantingMaterial(ItemTemplate const* proto);
 // The same for an item of the guild bank, known by its template (bind on equip, never soulbound there).
 bool IsJunkTemplateForEnchanter(PlayerbotAI* botAI, ItemTemplate const* proto, uint32 maxSkill);
