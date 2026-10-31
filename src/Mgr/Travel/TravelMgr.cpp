@@ -4973,6 +4973,46 @@ void TravelMgr::PrepareGatherNodeCache()
     // The beasts to skin go in cells of their own: normal rank, attackable, skinned with Skinning.
     std::map<std::tuple<uint32, int32, int32>, std::vector<uint32>> hostileLevels;
     uint32 beasts = 0;
+
+    // The loot entries holding cloth (Linen to Frostweave), directly or through two levels of references; the
+    // humanoids with such loot go in cells of their own, for the cloth missions.
+    std::set<uint32> clothLoot;
+    {
+        std::string const cloth = "2589,2592,4306,4338,14047,14256,21877,33470";
+        std::string refs = cloth;
+        std::set<uint32> refEntries;
+        for (int depth = 0; depth < 3 && !refs.empty(); ++depth)
+        {
+            std::string next;
+            if (QueryResult result = WorldDatabase.Query(
+                    "SELECT DISTINCT Entry FROM reference_loot_template WHERE {} IN ({})",
+                    depth ? "Reference" : "Item", refs))
+                do
+                {
+                    uint32 const entry = result->Fetch()[0].Get<uint32>();
+                    if (refEntries.insert(entry).second)
+                        next += (next.empty() ? "" : ",") + std::to_string(entry);
+                } while (result->NextRow());
+            refs = next;
+        }
+        std::string refList;
+        for (uint32 entry : refEntries)
+            refList += (refList.empty() ? "" : ",") + std::to_string(entry);
+        if (QueryResult result = WorldDatabase.Query(
+                "SELECT DISTINCT Entry FROM creature_loot_template WHERE Item IN ({}) OR Reference IN ({})", cloth,
+                refList.empty() ? "0" : refList))
+            do
+                clothLoot.insert(result->Fetch()[0].Get<uint32>());
+            while (result->NextRow());
+    }
+    clothCreatures.clear();
+    for (auto const& [entry, creature] : *sObjectMgr->GetCreatureTemplates())
+        if (creature.lootid && clothLoot.count(creature.lootid) && creature.type == CREATURE_TYPE_HUMANOID &&
+            creature.rank == CREATURE_ELITE_NORMAL && !creature.npcflag &&
+            !(creature.unit_flags & (UNIT_FLAG_NOT_SELECTABLE | UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_IMMUNE_TO_PC)))
+            clothCreatures.insert(entry);
+    uint32 humanoids = 0;
+
     for (auto const& [spawnId, data] : sObjectMgr->GetAllCreatureData())
     {
         CreatureTemplate const* creature = sObjectMgr->GetCreatureTemplate(data.id);
@@ -4995,6 +5035,17 @@ void TravelMgr::PrepareGatherNodeCache()
             ++beasts;
         }
 
+        if (clothCreatures.count(data.id) && !data.id2 && (data.phaseMask & PHASEMASK_NORMAL) &&
+            std::find(sPlayerbotAIConfig.randomBotMaps.begin(), sPlayerbotAIConfig.randomBotMaps.end(), data.mapid) !=
+                sPlayerbotAIConfig.randomBotMaps.end())
+        {
+            GatherCell& cell = cells[std::make_tuple(uint32(data.mapid), GATHER_CLOTH, cx, cy)];
+            cell.mapId = data.mapid;
+            cell.skillId = GATHER_CLOTH;
+            cell.points.push_back({data.posX, data.posY, data.posZ, 1, data.id, creature->maxlevel});
+            ++humanoids;
+        }
+
         FactionTemplateEntry const* faction = sFactionTemplateStore.LookupEntry(creature->faction);
         if (!faction || !faction->IsHostileToPlayers())
             continue;
@@ -5012,7 +5063,7 @@ void TravelMgr::PrepareGatherNodeCache()
         }
 
         // A lone node is not worth the trip; one pool is (the water stays when the pool is fished out).
-        if (cell.points.size() < (cell.skillId == SKILL_FISHING ? 1u : cell.skillId == SKILL_SKINNING ? 4u : 3u))
+        if (cell.points.size() < (cell.skillId == SKILL_FISHING ? 1u : (cell.skillId == SKILL_SKINNING || cell.skillId == GATHER_CLOTH) ? 4u : 3u))
             continue;
 
         float mx = 0.0f;
@@ -5076,8 +5127,8 @@ void TravelMgr::PrepareGatherNodeCache()
         gatherCells.push_back(std::move(cell));
     }
 
-    LOG_INFO("playerbots", ">> {} gathering nodes, {} beasts to skin in {} cells collected for the missions.", nodes,
-             beasts, gatherCells.size());
+    LOG_INFO("playerbots", ">> {} gathering nodes, {} beasts to skin, {} humanoids with cloth in {} cells collected for "
+             "the missions.", nodes, beasts, humanoids, gatherCells.size());
 }
 
 TravelMgr::GatherCell const* TravelMgr::SelectGatherCell(Player* bot, uint32 skillId, uint32 skillValue,
@@ -5123,8 +5174,10 @@ TravelMgr::GatherCell const* TravelMgr::SelectGatherCell(Player* bot, uint32 ski
         {
             if (p.reqSkill > skillValue)
                 continue;
-            // Skinning: only the beasts it can fight.
+            // Skinning and cloth: only the creatures it can fight; cloth, not those far below it either (poorer cloth).
             if (p.level && p.level > level + 1)
+                continue;
+            if (skillId == GATHER_CLOTH && p.level + 8 < level)
                 continue;
             // Fishing: a catch raises the skill wherever it is made, any water of its skill does.
             if (nodes)
@@ -5223,6 +5276,25 @@ std::set<uint32> TravelMgr::NodesYielding(uint32 itemId, uint32& skillId, uint32
             return nodes;
         }
         reqSkill = 0;
+    }
+
+    // Cloth: the humanoids whose loot has it.
+    if (ItemTemplate const* proto = sObjectMgr->GetItemTemplate(itemId);
+        proto && proto->Class == ITEM_CLASS_TRADE_GOODS && proto->SubClass == ITEM_SUBCLASS_CLOTH)
+    {
+        std::set<uint32> const loot = lootEntries("creature_loot_template");
+        for (uint32 entry : sTravelMgr.clothCreatures)
+            if (CreatureTemplate const* creature = sObjectMgr->GetCreatureTemplate(entry); creature && loot.count(creature->lootid))
+                nodes.insert(entry);
+        // Deeper references: any humanoid with cloth, its level picks the cloth.
+        if (nodes.empty())
+            nodes = sTravelMgr.clothCreatures;
+        if (!nodes.empty())
+        {
+            skillId = GATHER_CLOTH;
+            reqSkill = 1;
+            return nodes;
+        }
     }
 
     // Fishing: the areas whose catch has it, and the pools that give it. Area ids and the gameobject entries of the

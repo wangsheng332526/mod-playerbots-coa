@@ -24,8 +24,8 @@ class Player;
 class PlayerbotAI;
 
 // Gathering missions of the alts: a player's own character, played as a bot, leaves the group, gathers herbs or
-// ore, skins beasts or fishes (2.8.4) in a zone of its level on its continent, then mails what it gathered to its owner.
-// Whispered commands (CoaMissionAction): "mission gather [minutes] [mining|herbalism|skinning|fishing]",
+// ore, skins beasts, fishes or kills humanoids for their cloth (2.8.4) in a zone of its level on its continent, then mails what it gathered to its owner.
+// Whispered commands (CoaMissionAction): "mission gather [minutes] [mining|herbalism|skinning|fishing|cloth]",
 // "mission status", "mission stop". Random bots never get one.
 enum class CoaMissionState : uint8
 {
@@ -38,7 +38,7 @@ struct CoaMission
 {
     // Saved (V1.1: a mission resumes when the alt logs in again, after a restart too)
     ObjectGuid::LowType owner = 0;  // the real player whose character this is
-    uint32 skillId = 0;             // SKILL_MINING, SKILL_HERBALISM, SKILL_SKINNING or SKILL_FISHING
+    uint32 skillId = 0;             // SKILL_MINING, SKILL_HERBALISM, SKILL_SKINNING, SKILL_FISHING, GATHER_CLOTH
     CoaMissionState state = CoaMissionState::Travel;
     int32 remainingMs = 0;          // counts only while the alt is logged in
     uint32 totalMinutes = 0;

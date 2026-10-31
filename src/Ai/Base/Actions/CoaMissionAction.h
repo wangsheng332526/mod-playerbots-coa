@@ -28,6 +28,8 @@ public:
     // risk: "risk" was asked, a mission in High Risk is accepted.
     bool Start(Player* requester, uint32 minutes, uint32 skillId, std::string& error, uint32 orderItem = 0,
                uint32 orderCount = 0, bool risk = false);
+    // "MISSIONCAN;...": the activities this alt can be sent to, for the addon.
+    std::string CanLine();
 };
 
 // One step of the mission of the "mission" strategy: walk to the gathering spot, go from node to node, end it.
@@ -42,7 +44,7 @@ public:
 private:
     bool DoTravel(CoaMission& mission, uint32 now);
     bool DoWork(CoaMission& mission, uint32 now);
-    // Skinning: the beast to kill next, and the fight itself, left to the combat strategies.
+    // Skinning and cloth: the creature to kill next, and the fight itself, left to the combat strategies.
     Unit* FindPrey(CoaMission const& mission);
     bool Hunt(CoaMission& mission, Unit* prey, uint32 now);
     bool DoFish(CoaMission& mission, uint32 now);

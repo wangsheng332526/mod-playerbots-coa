@@ -366,8 +366,8 @@ public:
         return true;
     }
 
-    // .playerbots missiontest [count] [minutes] [mining|herbalism|skinning|fishing|all] | status | stop : a test bench
-    // of the gathering missions, for random bots with no owner (nothing is mailed, each end is logged as MISSION BENCH
+    // .playerbots missiontest [count] [minutes] [mining|herbalism|skinning|fishing|cloth|all] | status | stop : a test
+    // bench of the gathering missions, for random bots with no owner (nothing is mailed, each end is logged as MISSION BENCH
     // END in the CoA bot log). Bots without the profession are taught it for the test, with a skill matching their
     // level, and given its tool.
     static bool HandleMissionTestCommand(ChatHandler* handler, char const* args)
@@ -415,6 +415,8 @@ public:
                 professions = {SKILL_SKINNING};
             else if (word == "fishing")
                 professions = {SKILL_FISHING};
+            else if (word == "cloth")
+                professions = {TravelMgr::GATHER_CLOTH};
             else if (word == "all")
                 professions = {SKILL_MINING, SKILL_HERBALISM, SKILL_SKINNING, SKILL_FISHING};
             else if (numbers++ == 0)
@@ -437,7 +439,7 @@ public:
 
             // The professions in turn; a bot that does not know it is taught it for the test, and given its tool.
             uint32 const skillId = professions[started % professions.size()];
-            if (!bot->HasSkill(skillId))
+            if (skillId != TravelMgr::GATHER_CLOTH && !bot->HasSkill(skillId))
             {
                 uint32 const value = std::min<uint32>(225, bot->GetLevel() * 5);
                 uint32 const step = value > 150 ? 3 : value > 75 ? 2 : 1;
@@ -469,9 +471,13 @@ public:
             CoaMissionAction action(botAI);
             std::string error;
             // One bot in three takes an order instead: 10 Copper Ore, Peacebloom, Light Leather or Raw Brilliant
-            // Smallfish.
-            uint32 const orders[4] = {2770u, 2447u, 2318u, 6291u};
-            uint32 const kind = skillId == SKILL_MINING ? 0 : skillId == SKILL_HERBALISM ? 1 : skillId == SKILL_SKINNING ? 2 : 3;
+            // Smallfish or Linen Cloth.
+            uint32 const orders[5] = {2770u, 2447u, 2318u, 6291u, 2589u};
+            uint32 const kind = skillId == SKILL_MINING      ? 0
+                                : skillId == SKILL_HERBALISM ? 1
+                                : skillId == SKILL_SKINNING  ? 2
+                                : skillId == SKILL_FISHING   ? 3
+                                                             : 4;
             uint32 const order = (started % 3 == 2) ? orders[kind] : 0u;
             if (!action.Start(nullptr, minutes, order ? 0 : skillId, error, order, order ? 10 : 0))
             {

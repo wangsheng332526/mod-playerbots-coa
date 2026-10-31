@@ -100,6 +100,12 @@ public:
 
 uint32 SkillOf(Player* bot, uint32 skillId) { return bot->HasSkill(skillId) ? bot->GetSkillValue(skillId) : 0; }
 
+// The skill a spot is chosen for: the alt's level for cloth, which asks for none.
+uint32 MissionSkillOf(Player* bot, uint32 skillId)
+{
+    return skillId == TravelMgr::GATHER_CLOTH ? bot->GetLevel() : SkillOf(bot, skillId);
+}
+
 std::string ZoneNameOf(uint32 zoneId)
 {
     AreaTableEntry const* zone = sAreaTableStore.LookupEntry(zoneId);
@@ -135,7 +141,7 @@ bool CoaMissionAction::Execute(Event event)
 
     // Any other word stays unanswered: "mission" also starts sentences said in party chat.
     if (!word.empty() && word != "status" && word != "stop" && word != "gather" && word != "help" && word != "watch" &&
-        word != "unwatch" && word != "order")
+        word != "unwatch" && word != "order" && word != "can")
         return true;
 
     if (!sPlayerbotAIConfig.missionsEnable)
@@ -154,6 +160,14 @@ bool CoaMissionAction::Execute(Event event)
     if (word.empty() || word == "status")
     {
         botAI->TellMasterNoFacing(sCoaMissionMgr.StatusLine(bot));
+        return true;
+    }
+
+    // "mission can": what this alt can be sent to do, for the addon:
+    // "MISSIONCAN;<level>;<suggested>;<activity>:<skill>:<ok|nopick|noknife|nopole>,...", cloth always.
+    if (word == "can")
+    {
+        botAI->TellMasterNoFacing(CanLine());
         return true;
     }
 
@@ -240,7 +254,7 @@ bool CoaMissionAction::Execute(Event event)
 
     if (word == "help")
     {
-        botAI->TellMasterNoFacing("Usage: mission gather [minutes] [mining|herbalism|skinning|fishing], mission order "
+        botAI->TellMasterNoFacing("Usage: mission gather [minutes] [mining|herbalism|skinning|fishing|cloth], mission order "
                                   "<item> [count] [minutes], mission status, mission stop");
         return true;
     }
@@ -263,6 +277,8 @@ bool CoaMissionAction::Execute(Event event)
             skillId = SKILL_SKINNING;
         else if (token == "fishing" || token == "fish")
             skillId = SKILL_FISHING;
+        else if (token == "cloth")
+            skillId = TravelMgr::GATHER_CLOTH;
     }
 
     std::string error;
@@ -306,7 +322,7 @@ bool CoaMissionAction::Start(Player* requester, uint32 minutes, uint32 skillId, 
         orderNodes = TravelMgr::NodesYielding(orderItem, skillId, reqSkill);
         if (orderNodes.empty())
         {
-            error = "that item does not come from an ore, a herb, a beast to skin or fishing";
+            error = "that item does not come from an ore, a herb, a beast to skin, fishing or cloth";
             return false;
         }
         if (SkillOf(bot, skillId) && SkillOf(bot, skillId) < reqSkill)
@@ -317,7 +333,8 @@ bool CoaMissionAction::Start(Player* requester, uint32 minutes, uint32 skillId, 
     }
 
     // The profession: the one asked, else the best of mining (with a pick) and herbalism, then skinning (with a
-    // knife), then fishing (with a pole). The professions of CoA's own (woodcutting...) are not gathered.
+    // knife), then fishing (with a pole), else cloth, which asks for none. The professions of CoA's own
+    // (woodcutting...) are not gathered.
     bool const pick = HasMiningPick(bot);
     bool const knife = HasSkinningKnife(bot);
     bool const pole = FindFishingPole(bot) != nullptr;
@@ -350,19 +367,13 @@ bool CoaMissionAction::Start(Player* requester, uint32 minutes, uint32 skillId, 
             skillId = SKILL_SKINNING;
         else if (fishing && pole)
             skillId = SKILL_FISHING;
-        else if (mining)
-            error = "I have no mining pick";
-        else if (skinning)
-            error = "I have no skinning knife";
-        else if (fishing)
-            error = "I have no fishing pole";
         else
-            error = "I know neither mining nor herbalism, nor skinning nor fishing";
+            skillId = TravelMgr::GATHER_CLOTH;
     }
     if (!error.empty())
         return false;
 
-    uint32 const skillValue = SkillOf(bot, skillId);
+    uint32 const skillValue = MissionSkillOf(bot, skillId);
     TravelMgr::GatherCell const* cell =
         sTravelMgr.SelectGatherCell(bot, skillId, skillValue, nullptr, orderItem ? &orderNodes : nullptr);
     // Fishing where no pool is known: the water right next to it, if the fish ordered (if any) is caught here.
@@ -448,6 +459,41 @@ bool CoaMissionAction::Start(Player* requester, uint32 minutes, uint32 skillId, 
                               " min. I will mail you what I gather. Whisper \"mission status\" or \"mission stop\"." +
                               riskLine);
     return true;
+}
+
+std::string CoaMissionAction::CanLine()
+{
+    bool const pick = HasMiningPick(bot);
+    bool const knife = HasSkinningKnife(bot);
+    bool const pole = FindFishingPole(bot) != nullptr;
+    uint32 const mining = SkillOf(bot, SKILL_MINING);
+    uint32 const herbalism = SkillOf(bot, SKILL_HERBALISM);
+    uint32 const skinning = SkillOf(bot, SKILL_SKINNING);
+    uint32 const fishing = FishingSpellOf(bot) ? SkillOf(bot, SKILL_FISHING) : 0;
+
+    // The same choice as a mission sent with no activity.
+    char const* suggested = "cloth";
+    if (mining && pick && (!herbalism || mining >= herbalism))
+        suggested = "mining";
+    else if (herbalism)
+        suggested = "herbalism";
+    else if (skinning && knife)
+        suggested = "skinning";
+    else if (fishing && pole)
+        suggested = "fishing";
+
+    std::ostringstream out;
+    out << "MISSIONCAN;" << uint32(bot->GetLevel()) << ';' << suggested << ';';
+    if (mining)
+        out << "mining:" << mining << ':' << (pick ? "ok" : "nopick") << ',';
+    if (herbalism)
+        out << "herbalism:" << herbalism << ":ok,";
+    if (skinning)
+        out << "skinning:" << skinning << ':' << (knife ? "ok" : "noknife") << ',';
+    if (fishing)
+        out << "fishing:" << fishing << ':' << (pole ? "ok" : "nopole") << ',';
+    out << "cloth:" << uint32(bot->GetLevel()) << ":ok";
+    return out.str();
 }
 
 bool CoaMissionUpdateAction::isUseful() { return bot->IsAlive() && sCoaMissionMgr.IsOnMission(bot); }
@@ -704,8 +750,9 @@ bool CoaMissionUpdateAction::DoWork(CoaMission& mission, uint32 now)
         return false;
     }
 
-    // Skinning: the next beast of its level, killed by the combat strategies, skinned by the loot strategy.
-    if (mission.skillId == SKILL_SKINNING)
+    // Skinning and cloth: the next beast or humanoid of its level, killed by the combat strategies, skinned or
+    // looted by the loot strategy.
+    if (mission.skillId == SKILL_SKINNING || mission.skillId == TravelMgr::GATHER_CLOTH)
     {
         if (Unit* prey = FindPrey(mission))
         {
@@ -814,7 +861,7 @@ bool CoaMissionUpdateAction::LeaveSpot(CoaMission& mission, uint32 now)
         return true;
     }
     TravelMgr::GatherCell const* next =
-        sTravelMgr.SelectGatherCell(bot, mission.skillId, SkillOf(bot, mission.skillId), cell,
+        sTravelMgr.SelectGatherCell(bot, mission.skillId, MissionSkillOf(bot, mission.skillId), cell,
                                     mission.orderNodes.empty() ? nullptr : &mission.orderNodes);
     if (!next)
     {
@@ -845,6 +892,7 @@ bool CoaMissionUpdateAction::LeaveSpot(CoaMission& mission, uint32 now)
 
 Unit* CoaMissionUpdateAction::FindPrey(CoaMission const& mission)
 {
+    bool const cloth = mission.skillId == TravelMgr::GATHER_CLOTH;
     uint32 const skill = SkillOf(bot, SKILL_SKINNING);
     Creature* best = nullptr;
     float bestDist = 0.0f;
@@ -858,9 +906,13 @@ Unit* CoaMissionUpdateAction::FindPrey(CoaMission const& mission)
             creature->GetOwnerGUID())
             continue;
         CreatureTemplate const* info = creature->GetCreatureTemplate();
-        if (!info || !info->SkinLootId || info->GetRequiredLootSkill() != SKILL_SKINNING)
+        if (!info)
             continue;
-        if (creature->GetLevel() > bot->GetLevel() + 1 || SkinningSkillFor(creature->GetLevel()) > skill)
+        if (cloth ? !sTravelMgr.DropsCloth(creature->GetEntry())
+                  : (!info->SkinLootId || info->GetRequiredLootSkill() != SKILL_SKINNING ||
+                     SkinningSkillFor(creature->GetLevel()) > skill))
+            continue;
+        if (creature->GetLevel() > bot->GetLevel() + 1)
             continue;
         // Never one tapped or fought by someone else, nor one out of reach (in the water, on a ledge).
         if ((creature->hasLootRecipient() && !creature->isTappedBy(bot)) ||

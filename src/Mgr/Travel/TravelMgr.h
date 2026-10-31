@@ -898,6 +898,11 @@ public:
         uint32 areaId = 0;          // fishing: the area of the water, whose fishing loot it gives
     };
 
+    // The "profession" of a cloth mission (humanoids killed for their cloth): no skill, the alt's level stands for it.
+    static constexpr uint32 GATHER_CLOTH = 60000;
+    // The creatures whose loot may hold cloth (humanoids of normal rank), read at the start.
+    bool DropsCloth(uint32 creatureEntry) const { return clothCreatures.count(creatureEntry) != 0; }
+
     struct GatherCell
     {
         uint32 mapId = 0;
@@ -1047,6 +1052,7 @@ private:
     std::unordered_map<uint32, std::vector<WorldLocation>> creatureSpawnsByTemplate;
     std::map<uint32, LevelBracket> zone2LevelBracket;
     std::vector<GatherCell> gatherCells;
+    std::set<uint32> clothCreatures;
     // AddFishingCell: a deque, so that the cells already given never move.
     std::deque<GatherCell> extraGatherCells;
     mutable std::mutex extraGatherLock;

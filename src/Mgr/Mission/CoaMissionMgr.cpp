@@ -200,6 +200,8 @@ std::string CoaMissionMgr::SkillName(uint32 skillId)
             return "skinning";
         case SKILL_FISHING:
             return "fishing";
+        case TravelMgr::GATHER_CLOTH:
+            return "cloth";
     }
     return "?";
 }
@@ -513,13 +515,17 @@ void CoaMissionMgr::OnLoot(Player* bot, Item* item, uint32 count, ObjectGuid loo
         proto->Bonding == BIND_QUEST_ITEM)
         return;
 
+    uint32 skillId = 0;
     {
         std::lock_guard<std::mutex> guard(lock);
-        if (missions.find(bot->GetGUID().GetCounter()) == missions.end())
+        auto const it = missions.find(bot->GetGUID().GetCounter());
+        if (it == missions.end())
             return;
+        skillId = it->second.skillId;
     }
 
-    // Herbs and ore, a fishing catch (the bobber, or a pool), a skinned corpse: never the plain loot of a kill.
+    // Herbs and ore, a fishing catch (the bobber, or a pool), a skinned corpse, the cloth of a kill on a cloth
+    // mission: never the rest of the loot of a kill.
     if (lootGuid.IsGameObject())
     {
         GameObject* go = ObjectAccessor::GetGameObject(*bot, lootGuid);
@@ -530,7 +536,9 @@ void CoaMissionMgr::OnLoot(Player* bot, Item* item, uint32 count, ObjectGuid loo
     else
     {
         Creature* creature = ObjectAccessor::GetCreature(*bot, lootGuid);
-        if (!creature || creature->loot.loot_type != LOOT_SKINNING)
+        bool const cloth = skillId == TravelMgr::GATHER_CLOTH && proto->Class == ITEM_CLASS_TRADE_GOODS &&
+                           proto->SubClass == ITEM_SUBCLASS_CLOTH;
+        if (!creature || (creature->loot.loot_type != LOOT_SKINNING && !cloth))
             return;
     }
 
