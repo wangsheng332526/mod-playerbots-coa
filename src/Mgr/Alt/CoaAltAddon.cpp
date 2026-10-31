@@ -6,6 +6,7 @@
 
 #include "CoaAltAddon.h"
 
+#include "Bag.h"
 #include "ChatHelper.h"
 #include "CoaEnchanter.h"
 #include "DisableMgr.h"
@@ -17,6 +18,10 @@
 #include "Playerbots.h"
 #include "QuestDef.h"
 #include "ScriptMgr.h"
+#include "SpellInfo.h"
+#include "SpellMgr.h"
+#include "Trainer.h"
+#include "World.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -47,6 +52,125 @@ uint32 HelloCount(Player* master)
     std::lock_guard<std::mutex> guard(seenLock);
     auto itr = seenAt.find(master->GetGUID().GetRawValue());
     return itr == seenAt.end() ? 0 : itr->second.hello;
+}
+
+// The team dashboard: how often STAT and PROF are looked at (and so sent at most).
+constexpr time_t STAT_EVERY = 30;
+constexpr time_t PROF_EVERY = 10;
+constexpr size_t PROF_ROOM = 240;
+
+// Primary professions first, then the secondary ones.
+uint32 const SHEET_SKILLS[] = { SKILL_ALCHEMY,   SKILL_BLACKSMITHING, SKILL_ENCHANTING,     SKILL_ENGINEERING,
+                                SKILL_HERBALISM, SKILL_INSCRIPTION,   SKILL_JEWELCRAFTING,  SKILL_LEATHERWORKING,
+                                SKILL_MINING,    SKILL_SKINNING,      SKILL_TAILORING,      SKILL_COOKING,
+                                SKILL_FIRST_AID, SKILL_FISHING };
+
+// The level the trainers of this server ask for each profession rank spell (Journeyman Blacksmith...): the lowest
+// one, whether the trainer row is the rank spell or a spell that teaches it. A rank no trainer teaches is not here.
+// ponytail: built once at first use (thread-safe static), a `.reload` of the trainers does not rebuild it
+std::unordered_map<uint32, uint8> const& RankLevels()
+{
+    static std::unordered_map<uint32, uint8> const levels = []
+    {
+        std::unordered_map<uint32, uint8> result;
+        auto note = [&result](uint32 spellId, uint8 level)
+        {
+            SpellLearnSkillNode const* node = sSpellMgr->GetSpellLearnSkill(spellId);
+            if (!node || !IsProfessionSkill(node->skill))
+                return;
+            auto [itr, inserted] = result.try_emplace(spellId, level);
+            if (!inserted)
+                itr->second = std::min(itr->second, level);
+        };
+        for (auto const& [trainerId, trainer] : sObjectMgr->GetTrainers())
+            for (Trainer::Spell const& spell : trainer.GetSpells())
+            {
+                note(spell.SpellId, spell.ReqLevel);
+                if (SpellInfo const* info = sSpellMgr->GetSpellInfo(spell.SpellId))
+                    for (SpellEffectInfo const& effect : info->GetEffects())
+                        if (effect.IsEffect(SPELL_EFFECT_LEARN_SPELL) && effect.TriggerSpell)
+                            note(effect.TriggerSpell, spell.ReqLevel);
+            }
+        return result;
+    }();
+    return levels;
+}
+
+// "<skill>:<value>:<max>:<step>:<next step>:<level of the next step>", next step 0 when no trainer teaches more.
+std::string ProfEntry(Player* bot, uint32 skill)
+{
+    uint16 const step = bot->GetSkillStep(skill);
+    uint32 nextStep = 0;
+    uint32 nextLevel = 0;
+    for (uint32 rankSpell : sSpellMgr->GetSkillRankSpells(skill))
+    {
+        SpellLearnSkillNode const* node = sSpellMgr->GetSpellLearnSkill(rankSpell);
+        if (!node || node->step != step + 1)
+            continue;
+        auto itr = RankLevels().find(rankSpell);
+        if (itr == RankLevels().end())
+            continue;
+        uint32 level = itr->second;
+        if (!level)
+            if (SpellInfo const* info = sSpellMgr->GetSpellInfo(rankSpell))
+                level = std::max(info->BaseLevel, info->SpellLevel);
+        if (!nextStep || level < nextLevel)
+            nextLevel = level;
+        nextStep = node->step;
+    }
+    std::ostringstream out;
+    out << skill << ":" << bot->GetPureSkillValue(skill) << ":" << bot->GetPureMaxSkillValue(skill) << ":" << step << ":"
+        << nextStep << ":" << nextLevel;
+    return out.str();
+}
+
+std::string ProfLine(Player* bot)
+{
+    std::string entries;
+    for (uint32 skill : SHEET_SKILLS)
+    {
+        if (!bot->HasSkill(skill))
+            continue;
+        std::string const entry = ProfEntry(bot, skill);
+        if (entries.size() + entry.size() + 1 > PROF_ROOM)
+            break;
+        entries += (entries.empty() ? "" : ",") + entry;
+    }
+    return "PROF\t" + std::to_string(bot->GetFreePrimaryProfessionPoints()) + "\t" + entries;
+}
+
+std::string StatLine(Player* bot)
+{
+    uint32 lowest = 100;
+    for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+        if (Item* item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+            if (uint32 const max = item->GetUInt32Value(ITEM_FIELD_MAXDURABILITY))
+                lowest = std::min<uint32>(lowest, item->GetUInt32Value(ITEM_FIELD_DURABILITY) * 100 / max);
+
+    // As the "stats" command counts them: the backpack and the plain bags (no quiver, no profession bag).
+    uint32 slots = INVENTORY_SLOT_ITEM_END - INVENTORY_SLOT_ITEM_START;
+    uint32 freeSlots = 0;
+    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        if (!bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+            ++freeSlots;
+    for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+        if (Bag const* pBag = bot->GetBagByPos(bag))
+        {
+            ItemTemplate const* proto = pBag->GetTemplate();
+            if (proto->Class == ITEM_CLASS_CONTAINER && proto->SubClass == ITEM_SUBCLASS_CONTAINER)
+            {
+                slots += pBag->GetBagSize();
+                freeSlots += pBag->GetFreeSlots();
+            }
+        }
+
+    bool const maxLevel = bot->GetLevel() >= sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL);
+    std::ostringstream out;
+    out << "STAT\t" << uint32(bot->GetLevel()) << "\t" << (maxLevel ? 0 : bot->GetUInt32Value(PLAYER_XP)) << "\t"
+        << (maxLevel ? 0 : bot->GetUInt32Value(PLAYER_NEXT_LEVEL_XP)) << "\t" << bot->GetMoney() << "\t" << freeSlots << "\t"
+        << slots << "\t" << lowest << "\t" << uint32(bot->getClass()) << "\t"
+        << (maxLevel ? 0 : bot->GetUInt32Value(PLAYER_REST_STATE_EXPERIENCE));
+    return out.str();
 }
 
 bool InLog(QuestStatus status)
@@ -253,7 +377,7 @@ bool OnAddonWhisper(Player* from, Player* receiver, std::string const& msg)
         }
         std::ostringstream out;
         out << "HELLO\t" << PROTOCOL << "\t" << (sPlayerbotAIConfig.catchUpQuestChains ? 1 : 0) << "\t"
-            << (sPlayerbotAIConfig.altChatToAddon ? 1 : 0);
+            << (sPlayerbotAIConfig.altChatToAddon ? 1 : 0) << "\t1";
         Send(receiver, from, out.str());
         CoaEnchanter::SendStatus(botAI);
         return true;
@@ -495,5 +619,39 @@ void TickTeam(PlayerbotAI* botAI, TeamCache& cache)
             Send(bot, master, line);
     }
     cache.objectives.swap(seen);
+
+    SendSheet(botAI, cache, false);
+}
+
+void SendSheet(PlayerbotAI* botAI, TeamCache& cache, bool force)
+{
+    if (!botAI || !botAI->IsAltBot())
+        return;
+    Player* bot = botAI->GetBot();
+    Player* master = botAI->GetMaster();
+    if (!bot || !master || !master->IsInWorld())
+        return;
+
+    time_t const now = time(nullptr);
+    if (force || now - cache.statAt >= STAT_EVERY)
+    {
+        cache.statAt = now;
+        std::string const line = StatLine(bot);
+        if (force || line != cache.stat)
+        {
+            cache.stat = line;
+            Send(bot, master, line);
+        }
+    }
+    if (force || now - cache.profAt >= PROF_EVERY)
+    {
+        cache.profAt = now;
+        std::string const line = ProfLine(bot);
+        if (force || line != cache.prof)
+        {
+            cache.prof = line;
+            Send(bot, master, line);
+        }
+    }
 }
 }  // namespace CoaAltAddon

@@ -31,6 +31,11 @@ struct TeamCache
     time_t teamAt = 0;
     uint32 hello = 0;
     std::map<uint32, std::string> objectives;
+    // The team dashboard (STAT, PROF): what was sent last, and when it was last looked at.
+    std::string stat;
+    std::string prof;
+    time_t statAt = 0;
+    time_t profAt = 0;
 };
 
 struct QuestState
@@ -60,6 +65,9 @@ void SendQuestState(PlayerbotAI* botAI, Quest const* quest);
 
 // Every TEAM_TICK_MS, alts of an owner with the addon: TEAM on a change or each minute, OBJ on a change.
 void TickTeam(PlayerbotAI* botAI, TeamCache& cache);
+// The team dashboard: STAT (looked at every 30 s) and PROF (every 10 s), sent when they changed; force: both now
+// ("alt sheet" of the addon).
+void SendSheet(PlayerbotAI* botAI, TeamCache& cache, bool force);
 
 // The prerequisites to mark rewarded so that the quest can be taken, the oldest first. False when the quest is
 // blocked by something else than its chain, or when the chain cannot be caught up (another race, a daily...).
