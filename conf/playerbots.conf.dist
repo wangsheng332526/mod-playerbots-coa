@@ -1812,8 +1812,8 @@ AiPlayerbot.Missions.MaxMinutes = 120
 AiPlayerbot.Missions.DefaultMinutes = 60
 
 # Missions at the same time per player (0 = no limit).
-# Default: 3
-AiPlayerbot.Missions.MaxPerPlayer = 3
+# Default: 4
+AiPlayerbot.Missions.MaxPerPlayer = 4
 
 # Deaths before the bot gives up and mails what it has.
 # Default: 3

@@ -822,7 +822,7 @@ bool PlayerbotAIConfig::Initialize()
     missionsMaxMinutes = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("AiPlayerbot.Missions.MaxMinutes", 120, false), 1, 24 * 60);
     missionsDefaultMinutes = std::clamp<uint32>(
         sConfigMgr->GetOption<uint32>("AiPlayerbot.Missions.DefaultMinutes", 60, false), 1, missionsMaxMinutes);
-    missionsMaxPerPlayer = sConfigMgr->GetOption<uint32>("AiPlayerbot.Missions.MaxPerPlayer", 3, false);
+    missionsMaxPerPlayer = sConfigMgr->GetOption<uint32>("AiPlayerbot.Missions.MaxPerPlayer", 4, false);
     missionsMaxDeaths = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AiPlayerbot.Missions.MaxDeaths", 3, false));
     missionsTeleportFallback = sConfigMgr->GetOption<bool>("AiPlayerbot.Missions.TeleportFallback", true, false);
     missionsTeleportToSpot = sConfigMgr->GetOption<bool>("AiPlayerbot.Missions.TeleportToSpot", true, false);
