@@ -1107,6 +1107,13 @@ bool CoaMissionUpdateAction::DoFish(CoaMission& mission, uint32 now)
         mission.weapon = mainHand ? mainHand->GetGUID() : ObjectGuid::Empty;
         mission.offhand = offHand ? offHand->GetGUID() : ObjectGuid::Empty;
         CoaMissionMgr::EquipItem(bot, pole, EQUIPMENT_SLOT_MAINHAND);
+        // Refused (no room in the bags for what it held, a two-hand pole with an off-hand): no fishing at all.
+        if (!IsFishingPole(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND)))
+        {
+            mission.state = CoaMissionState::Deliver;
+            mission.endReason = "I could not take my fishing pole in hand (are my bags full?)";
+            return false;
+        }
         return true;
     }
 
