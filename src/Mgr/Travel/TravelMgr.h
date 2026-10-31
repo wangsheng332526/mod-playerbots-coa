@@ -927,6 +927,8 @@ public:
     // The herb and ore nodes whose loot has this item, with their profession and the lowest skill they need; else the
     // beasts whose skin gives it (creature entries), else the waters where it is fished (fishing pools and area ids).
     static std::set<uint32> NodesYielding(uint32 itemId, uint32& skillId, uint32& reqSkill);
+    // NodesYielding read from the database (world database queries), cached by NodesYielding.
+    static std::set<uint32> ReadNodesYielding(uint32 itemId, uint32& skillId, uint32& reqSkill);
     // The cell whose anchor point is (x, y), to resume a saved mission.
     GatherCell const* FindGatherCell(uint32 mapId, uint32 skillId, float x, float y) const;
     // A fishing cell of one point, for water found next to the bot where no pool is known; kept until the restart.
