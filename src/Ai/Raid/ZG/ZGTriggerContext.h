@@ -21,6 +21,10 @@ public:
         creators["hakkar blood scythe"] = &RaidZulGurubTriggerContext::hakkar_blood_scythe;
         creators["hakkar blood pool"] = &RaidZulGurubTriggerContext::hakkar_blood_pool;
 
+        // High Priest Venoxis
+        creators["venoxis venom spit"] = &RaidZulGurubTriggerContext::venoxis_venom_spit;
+        creators["venoxis backup taunt"] = &RaidZulGurubTriggerContext::venoxis_backup_taunt;
+
         // Bloodlord Mandokir
         creators["bloodlord mandokir threatening gaze"] =
             &RaidZulGurubTriggerContext::bloodlord_mandokir_threatening_gaze;
@@ -30,6 +34,11 @@ private:
     static Trigger* hakkar_mark(PlayerbotAI* botAI) { return new RaidKillOrderMarkTrigger(botAI, "hakkar mark", "hakkar"); }
     static Trigger* hakkar_blood_scythe(PlayerbotAI* botAI) { return new HakkarBloodScytheTrigger(botAI); }
     static Trigger* hakkar_blood_pool(PlayerbotAI* botAI) { return new HakkarBloodPoolTrigger(botAI); }
+    static Trigger* venoxis_venom_spit(PlayerbotAI* botAI) { return new VenoxisVenomSpitTrigger(botAI); }
+    static Trigger* venoxis_backup_taunt(PlayerbotAI* botAI)
+    {
+        return new RaidBackupTauntTrigger(botAI, "venoxis backup taunt", "high priest venoxis");
+    }
     static Trigger* bloodlord_mandokir_threatening_gaze(PlayerbotAI* botAI)
     {
         return new BloodlordMandokirThreateningGazeTrigger(botAI);

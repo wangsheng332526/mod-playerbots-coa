@@ -29,6 +29,8 @@ void RaidBwlStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         NextAction("rear flank", ACTION_MOVE + 4) }));
     triggers.push_back(new TriggerNode("bwl vaelastrasz burning adrenaline", {
         NextAction("bwl vaelastrasz move away", ACTION_RAID + 5) }));
+    triggers.push_back(new TriggerNode("bwl vaelastrasz tank swap", {
+        NextAction("bwl vaelastrasz tank swap", ACTION_RAID + 2) }));
 
     triggers.push_back(new TriggerNode("bwl broodlord fire resistance", {
         NextAction("bwl broodlord fire resistance", ACTION_RAID) }));

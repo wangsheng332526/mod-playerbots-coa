@@ -83,6 +83,15 @@ float VaelastraszBurningAdrenalineMultiplier::GetValue(Action* action)
         // Also block charge actions
         if (dynamic_cast<CastReachTargetSpellAction*>(action))
             return 0.0f;
+
+        // A tank under it generates no threat and leaves him to the next tank: no taunting him back.
+        std::string const name = action->getName();
+        if (name == "coa taunt" || name == "taunt spell" || name == "taunt" || name == "growl")
+        {
+            Unit* boss = AI_VALUE2(Unit*, "find target", "vaelastrasz the corrupt");
+            if (boss && boss->IsAlive() && boss->GetVictim() != bot)
+                return 0.0f;
+        }
     }
 
     return 1.0f;

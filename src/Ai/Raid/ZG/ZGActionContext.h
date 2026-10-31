@@ -22,6 +22,10 @@ public:
         creators["hakkar avoid blood scythe"] = &RaidZulGurubActionContext::hakkar_avoid_blood_scythe;
         creators["hakkar move from blood pool"] = &RaidZulGurubActionContext::hakkar_move_from_blood_pool;
 
+        // High Priest Venoxis
+        creators["venoxis avoid venom spit"] = &RaidZulGurubActionContext::venoxis_avoid_venom_spit;
+        creators["venoxis backup taunt"] = &RaidZulGurubActionContext::venoxis_backup_taunt;
+
         // Bloodlord Mandokir
         creators["bloodlord mandokir stop causing threat"] =
             &RaidZulGurubActionContext::bloodlord_mandokir_stop_causing_threat;
@@ -40,6 +44,11 @@ private:
     static Action* hakkar_move_from_blood_pool(PlayerbotAI* botAI)
     {
         return new RaidMoveFromGroundEffectAction(botAI, "hakkar move from blood pool");
+    }
+    static Action* venoxis_avoid_venom_spit(PlayerbotAI* botAI) { return new VenoxisAvoidVenomSpitAction(botAI); }
+    static Action* venoxis_backup_taunt(PlayerbotAI* botAI)
+    {
+        return new RaidBackupTauntAction(botAI, "venoxis backup taunt", "high priest venoxis");
     }
     static Action* bloodlord_mandokir_stop_causing_threat(PlayerbotAI* botAI)
     {

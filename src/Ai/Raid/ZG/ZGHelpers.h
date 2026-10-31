@@ -28,6 +28,9 @@ enum class ZulGurubSpells : uint32
 
     // Bloodlord Mandokir
     SPELL_THREATENING_GAZE = 24314,
+
+    // High Priest Venoxis
+    SPELL_VENOXIS_SNAKE_FORM = 2118023,  // CoA Aspect of Hethiss on himself, from 50%: Venom Spit starts
 };
 
 enum class ZulGurubNpcs : uint32
@@ -44,6 +47,9 @@ enum class ZulGurubNpcs : uint32
 
     // Bloodlord Mandokir
     NPC_BLOODLORD_MANDOKIR = 11382,
+
+    // High Priest Venoxis
+    NPC_HIGH_PRIEST_VENOXIS = 14507,
 };
 
 // CoA Blood Scythe (2118630, every 12 s): 150% weapon damage to every player within 20 yd in a 90 degree
@@ -51,6 +57,13 @@ enum class ZulGurubNpcs : uint32
 constexpr float HAKKAR_SCYTHE_DANGER_RANGE = 25.0f;
 constexpr float HAKKAR_SCYTHE_DANGER_ARC = 140.0f * float(M_PI) / 180.0f;  // total arc, 70 degrees each side
 constexpr float HAKKAR_SCYTHE_FLANK_ANGLE = 110.0f * float(M_PI) / 180.0f;
+
+// CoA Venom Spit (2118030, snake form, every 10 s at his victim): 3500 to every player within 60 yd in a 90 degree
+// frontal cone, plus a stack of Virulent Poison (250 every 3 s, 30 s, refreshed). His threat list is wiped when he
+// turns into a snake, so the cone swings onto whoever he picks up next. Non-victims keep out of a wider cone.
+constexpr float VENOXIS_SPIT_DANGER_RANGE = 62.0f;
+constexpr float VENOXIS_SPIT_DANGER_ARC = 130.0f * float(M_PI) / 180.0f;  // total arc, 65 degrees each side
+constexpr float VENOXIS_SPIT_FLANK_ANGLE = 105.0f * float(M_PI) / 180.0f;
 
 // A member that goes down is restored to full health 10 s later (a zealot's death also restores Thekal) unless
 // all three are down by then.
