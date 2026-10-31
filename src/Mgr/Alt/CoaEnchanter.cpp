@@ -364,8 +364,12 @@ std::string Command(PlayerbotAI* botAI, Player* master, std::string const& arg)
 
     if (word == "set")
     {
+        // The rest of the line: CoA names take two words ("Dez Alt"), and quotes are never part of a name.
         std::string name;
-        in >> name;
+        std::getline(in, name);
+        name.erase(std::remove_if(name.begin(), name.end(), [](char c) { return c == '"' || c == '\''; }), name.end());
+        name.erase(0, name.find_first_not_of(' '));
+        name.erase(name.find_last_not_of(' ') + 1);
         if (name.empty())
             return "Usage: alt enchanter set <name>";
         normalizePlayerName(name);
