@@ -8,6 +8,7 @@
 
 #include "CharacterCache.h"
 #include "CoaAltAddon.h"
+#include "CoaMissionMgr.h"
 #include "DatabaseEnv.h"
 #include "Item.h"
 #include "ItemUsageValue.h"
@@ -18,12 +19,15 @@
 #include "PlayerbotAI.h"
 #include "PlayerbotAIConfig.h"
 #include "PlayerbotMgr.h"
+#include "PlayerbotOperation.h"
+#include "PlayerbotWorldThreadProcessor.h"
 #include "Playerbots.h"
 #include "RandomPlayerbotMgr.h"
 
 #include <algorithm>
 #include <cctype>
 #include <ctime>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <unordered_map>
@@ -36,48 +40,122 @@ constexpr time_t SKILL_CACHE_SECONDS = 10 * MINUTE;
 std::mutex skillLock;
 std::unordered_map<ObjectGuid::LowType, std::pair<uint32, time_t>> skillCache;
 
-// The heaviest armour an alt is trained for: what it would wear of the four kinds.
-uint32 BestArmorOf(Player* alt)
+constexpr time_t GEAR_REFRESH_SECONDS = MINUTE;
+
+// What each alt of a team logged in can wear, read in the world thread (the alts live on other maps than the bot
+// asking): its class and race, its weapon skills, the heaviest armour it is trained for.
+struct AltGear
 {
-    if (alt->HasSkill(SKILL_PLATE_MAIL))
-        return ITEM_SUBCLASS_ARMOR_PLATE;
-    if (alt->HasSkill(SKILL_MAIL))
-        return ITEM_SUBCLASS_ARMOR_MAIL;
-    if (alt->HasSkill(SKILL_LEATHER))
-        return ITEM_SUBCLASS_ARMOR_LEATHER;
-    return ITEM_SUBCLASS_ARMOR_CLOTH;
-}
+    ObjectGuid::LowType guid = 0;
+    uint32 classMask = 0;
+    uint32 raceMask = 0;
+    uint32 weapons = 0;
+    uint32 armor = ITEM_SUBCLASS_ARMOR_CLOTH;
+};
+struct TeamGear
+{
+    time_t at = 0;
+    bool pending = false;
+    std::vector<AltGear> alts;
+};
+std::mutex gearLock;
+std::unordered_map<ObjectGuid::LowType, TeamGear> teamGear;
+
+class CoaTeamGearOperation : public PlayerbotOperation
+{
+public:
+    explicit CoaTeamGearOperation(ObjectGuid owner) : m_owner(owner) {}
+
+    std::string GetName() const override { return "CoaTeamGear"; }
+
+    bool Execute() override
+    {
+        std::vector<AltGear> alts;
+        Player* master = ObjectAccessor::FindPlayer(m_owner);
+        if (PlayerbotMgr* mgr = master ? GET_PLAYERBOT_MGR(master) : nullptr)
+            for (auto itr = mgr->GetPlayerBotsBegin(); itr != mgr->GetPlayerBotsEnd(); ++itr)
+            {
+                Player* alt = itr->second;
+                PlayerbotAI* altAI = alt ? GET_PLAYERBOT_AI(alt) : nullptr;
+                if (!alt || !altAI || !altAI->IsAltBot())
+                    continue;
+                AltGear gear;
+                gear.guid = alt->GetGUID().GetCounter();
+                gear.classMask = alt->getClassMask();
+                gear.raceMask = alt->getRaceMask();
+                gear.weapons = alt->GetWeaponProficiency();
+                uint32 const armor = alt->GetArmorProficiency();
+                for (uint32 kind : {ITEM_SUBCLASS_ARMOR_PLATE, ITEM_SUBCLASS_ARMOR_MAIL, ITEM_SUBCLASS_ARMOR_LEATHER})
+                    if (armor & (1 << kind))
+                    {
+                        gear.armor = kind;
+                        break;
+                    }
+                alts.push_back(gear);
+            }
+        std::lock_guard<std::mutex> guard(gearLock);
+        TeamGear& team = teamGear[m_owner.GetCounter()];
+        team.alts.swap(alts);
+        team.at = time(nullptr);
+        team.pending = false;
+        return true;
+    }
+
+private:
+    ObjectGuid m_owner;
+};
 
 // An alt of the team logged in, other than the bot, would wear it: a weapon it can use, or armour of the kind it
-// wears (a level too low still counts). Rings, necks, trinkets and cloaks count for nobody.
+// wears (a level too low still counts). Rings, necks, trinkets and cloaks count for nobody. From the cache, asked
+// again in the world thread every minute.
 bool TeamWouldWear(Player* bot, Player* master, ItemTemplate const* proto)
 {
-    PlayerbotMgr* mgr = master ? GET_PLAYERBOT_MGR(master) : nullptr;
-    if (!mgr)
+    if (!bot || !master)
         return false;
     bool const armor = proto->Class == ITEM_CLASS_ARMOR;
     if (armor && (proto->SubClass < ITEM_SUBCLASS_ARMOR_CLOTH || proto->SubClass > ITEM_SUBCLASS_ARMOR_PLATE ||
                   proto->InventoryType == INVTYPE_CLOAK))
         return false;
-    for (auto itr = mgr->GetPlayerBotsBegin(); itr != mgr->GetPlayerBotsEnd(); ++itr)
+
+    ObjectGuid const owner = master->GetGUID();
+    ObjectGuid::LowType const self = bot->GetGUID().GetCounter();
+    std::vector<AltGear> alts;
+    bool refresh = false;
+    bool known = false;
     {
-        Player* alt = itr->second;
-        PlayerbotAI* altAI = alt ? GET_PLAYERBOT_AI(alt) : nullptr;
-        if (!alt || alt == bot || !altAI || !altAI->IsAltBot())
+        std::lock_guard<std::mutex> guard(gearLock);
+        TeamGear& team = teamGear[owner.GetCounter()];
+        if (!team.pending && time(nullptr) - team.at >= GEAR_REFRESH_SECONDS)
+            refresh = team.pending = true;
+        known = team.at != 0;
+        alts = team.alts;
+    }
+    if (refresh && !PlayerbotWorldThreadProcessor::instance().QueueOperation(std::make_unique<CoaTeamGearOperation>(owner)))
+    {
+        std::lock_guard<std::mutex> guard(gearLock);
+        teamGear[owner.GetCounter()].pending = false;
+    }
+    // Not read yet: kept, as if someone would wear it.
+    if (!known)
+        return true;
+
+    for (AltGear const& alt : alts)
+    {
+        if (alt.guid == self)
             continue;
-        InventoryResult const result = alt->CanUseItem(proto);
-        if (result != EQUIP_ERR_OK && result != EQUIP_ERR_CANT_EQUIP_LEVEL_I)
+        // As Player::CanUseItem: its class and race, its weapon skill.
+        if (!(proto->AllowableClass & alt.classMask) || !(proto->AllowableRace & alt.raceMask))
             continue;
-        if (!armor || proto->SubClass == BestArmorOf(alt))
+        if (armor ? proto->SubClass == alt.armor : (alt.weapons & (1 << proto->SubClass)) != 0)
             return true;
     }
     return false;
 }
 
-// Green or better gear, disenchantable at maxSkill, of no use to the bot itself.
+// Green or blue gear (never epic), disenchantable at maxSkill, of no use to the bot itself.
 bool IsJunkTemplate(PlayerbotAI* botAI, ItemTemplate const* proto, uint32 maxSkill)
 {
-    if (!proto || proto->Quality < ITEM_QUALITY_UNCOMMON || proto->Quality > ITEM_QUALITY_EPIC)
+    if (!proto || proto->Quality < ITEM_QUALITY_UNCOMMON || proto->Quality > ITEM_QUALITY_RARE)
         return false;
     if (proto->Class != ITEM_CLASS_ARMOR && proto->Class != ITEM_CLASS_WEAPON)
         return false;
@@ -127,7 +205,14 @@ Team TeamOf(PlayerbotAI* botAI)
 {
     if (!sPlayerbotAIConfig.altDisenchant || !botAI || !botAI->IsAltBot() || !botAI->GetMaster())
         return Team();
-    return Of(botAI->GetMaster()->GetGUID().GetCounter());
+    Team team = Of(botAI->GetMaster()->GetGUID().GetCounter());
+    // The bank mode works on the configured tab only: none, by mail.
+    if (team.mode == MODE_BANK && !sPlayerbotAIConfig.guildBankDepositTab)
+    {
+        team.mode = MODE_MAIL;
+        team.bankWithoutTab = true;
+    }
+    return team;
 }
 
 bool IsEnchanter(PlayerbotAI* botAI)
@@ -217,41 +302,12 @@ bool KeepFromVendor(PlayerbotAI* botAI, Item* item)
 uint32 MailItems(Player* bot, ObjectGuid::LowType to, std::vector<Item*> const& items, std::string const& subject,
                  std::string const& body)
 {
-    if (!bot || !to || items.empty() || to == bot->GetGUID().GetCounter())
-        return 0;
-
-    ObjectGuid const receiverGuid = ObjectGuid::Create<HighGuid::Player>(to);
-    CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
-    std::vector<Item*> toMail;
-    uint32 count = 0;
+    // By entry: the mission's mailer takes the stacks of the bags (never soulbound, never equipped).
+    std::map<uint32, uint32> counts;
     for (Item* item : items)
-    {
-        if (!item || item->IsEquipped() || item->IsSoulBound() || item->IsNotEmptyBag())
-            continue;
-        count += item->GetCount();
-        bot->MoveItemFromInventory(item->GetBagSlot(), item->GetSlot(), true);
-        item->DeleteFromInventoryDB(trans);
-        item->SetOwnerGUID(receiverGuid);
-        item->SaveToDB(trans);
-        toMail.push_back(item);
-    }
-    if (toMail.empty())
-    {
-        CharacterDatabase.CommitTransaction(trans);
-        return 0;
-    }
-
-    Player* receiver = ObjectAccessor::FindConnectedPlayer(receiverGuid);
-    for (size_t first = 0; first < toMail.size(); first += MAX_MAIL_ITEMS)
-    {
-        MailDraft draft(subject, body);
-        for (size_t i = first; i < toMail.size() && i < first + MAX_MAIL_ITEMS; ++i)
-            draft.AddItem(toMail[i]);
-        draft.SendMailTo(trans, MailReceiver(receiver, to), MailSender(bot));
-    }
-    bot->SaveInventoryAndGoldToDB(trans);
-    CharacterDatabase.CommitTransaction(trans);
-    return count;
+        if (item && !item->IsEquipped() && !item->IsSoulBound())
+            counts[item->GetEntry()] += item->GetCount();
+    return CoaMissionMgr::MailItems(bot, to, counts, subject, body);
 }
 
 void SendStatus(PlayerbotAI* botAI)
@@ -324,7 +380,11 @@ std::string Command(PlayerbotAI* botAI, Player* master, std::string const& arg)
             if (PlayerbotAI* altAI = itr->second ? GET_PLAYERBOT_AI(itr->second) : nullptr)
                 SendStatus(altAI);
 
-    std::string const how = team.mode == MODE_BANK ? "through the guild bank" : "by mail";
+    std::string how = team.mode == MODE_BANK ? "through the guild bank" : "by mail";
+    if (team.mode == MODE_BANK && !sPlayerbotAIConfig.guildBankDepositTab)
+        how += " (not before the server sets AiPlayerbot.GuildBankDeposit.Tab: by mail meanwhile)";
+    else if (team.mode == MODE_BANK)
+        how += " (tab " + std::to_string(sPlayerbotAIConfig.guildBankDepositTab) + ")";
     if (!team.enchanter)
         return "No enchanter in the team: the greens are sold (mode " + how + " kept for later).";
     return "Enchanter of the team: " + team.name + ", the greens go to it " + how + ".";

@@ -33,19 +33,23 @@ struct Team
     ObjectGuid::LowType enchanter = 0;  // 0: none named
     uint32 mode = MODE_MAIL;
     std::string name;
+    // TeamOf: the bank mode was chosen, but no guild bank tab is configured (AiPlayerbot.GuildBankDeposit.Tab):
+    // the greens go by mail meanwhile.
+    bool bankWithoutTab = false;
 };
 
 // The choice of a player, kept in playerbots_random_bots (key coa_enchanter on the player's guid, no expiry).
 Team Of(ObjectGuid::LowType owner);
 void Set(ObjectGuid::LowType owner, Team const& team);
 
-// The team of an alt: its master's choice; empty when AltDisenchant is off or the bot is no alt.
+// The team of an alt: its master's choice, the mode as it works (by mail while no tab is configured); empty when
+// AltDisenchant is off or the bot is no alt.
 Team TeamOf(PlayerbotAI* botAI);
 bool IsEnchanter(PlayerbotAI* botAI);
 // Enchanting of a character, logged in or not.
 uint32 EnchantingOf(ObjectGuid::LowType guid);
 
-// Green or better gear of its bags that goes to the enchanter: disenchantable (at most maxSkill, 0 = any), no use
+// Green or blue gear of its bags (never epic) that goes to the enchanter: disenchantable (at most maxSkill, 0 = any), no use
 // to the bot itself (as "s junk" judges it), and none an alt of the team logged in could wear (bind on equip).
 bool IsJunkToDisenchant(PlayerbotAI* botAI, Item* item, uint32 maxSkill = 0);
 bool IsEnchantingMaterial(ItemTemplate const* proto);

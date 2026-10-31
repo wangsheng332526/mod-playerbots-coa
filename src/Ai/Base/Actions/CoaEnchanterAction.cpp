@@ -25,6 +25,7 @@
 #include "Playerbots.h"
 
 #include <memory>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <vector>
@@ -37,6 +38,10 @@ constexpr time_t MAIL_SECONDS = 10 * MINUTE;
 constexpr time_t WITHDRAW_SECONDS = MINUTE;
 constexpr time_t RIGHTS_TOLD_SECONDS = 30 * MINUTE;
 constexpr uint32 MAX_WITHDRAW = 10;
+
+// The players told that the bank mode needs a configured tab: once per player and server run.
+std::mutex toldLock;
+std::set<ObjectGuid::LowType> toldNoTab;
 
 std::vector<Item*> BagItems(Player* bot)
 {
@@ -89,9 +94,10 @@ bool CanDepositSomewhere(Player* bot, Guild* guild)
     return false;
 }
 
-// Mode bank: the enchanter near the vault takes out the gear it may disenchant. Runs in the world thread, like
-// the deposits: the guild bank is not thread-safe. The bank's content is read from the database, every item is
-// checked again once in the bags (one that is not the expected one goes back).
+// Mode bank: the enchanter near the vault takes out the gear it may disenchant, from the configured tab only (the
+// tab the alts put it in), never anything else of the guild. Runs in the world thread, like the deposits: the guild
+// bank is not thread-safe. The tab's content is read from the database, every item is checked again once in the
+// bags (one that is not the expected one goes back).
 class CoaEnchanterWithdrawOperation : public PlayerbotOperation
 {
 public:
@@ -112,31 +118,35 @@ public:
             return false;
 
         uint32 const skill = bot->HasSkill(SKILL_ENCHANTING) ? bot->GetSkillValue(SKILL_ENCHANTING) : 0;
+        uint32 const configured = sPlayerbotAIConfig.guildBankDepositTab;
+        if (!skill || !configured || configured > GUILD_BANK_MAX_TABS)
+            return false;
+        uint8 const tab = uint8(configured - 1);
+        if (!guild->MemberHasTabRights(bot->GetGUID(), tab, GUILD_BANK_RIGHT_VIEW_TAB))
+        {
+            std::string const line = "Guild bank: my rank cannot see tab " + std::to_string(configured) + ".";
+            LOG_INFO("playerbots", "Enchanter {} (guild {}): {}", bot->GetName(), guild->GetName(), line);
+            botAI->TellMasterNoFacing(line);
+            return false;
+        }
         QueryResult result = CharacterDatabase.Query(
-            "SELECT gbi.TabId, gbi.SlotId, ii.itemEntry FROM guild_bank_item gbi JOIN item_instance ii ON ii.guid = "
-            "gbi.item_guid WHERE gbi.guildid = {} ORDER BY gbi.TabId, gbi.SlotId",
-            guild->GetId());
-        if (!result || !skill)
+            "SELECT gbi.SlotId, ii.itemEntry FROM guild_bank_item gbi JOIN item_instance ii ON ii.guid = "
+            "gbi.item_guid WHERE gbi.guildid = {} AND gbi.TabId = {} ORDER BY gbi.SlotId",
+            guild->GetId(), uint32(tab));
+        if (!result)
             return false;
 
         uint32 taken = 0;
         bool refused = false;
-        std::set<uint32> hiddenTabs;
         do
         {
             if (taken >= MAX_WITHDRAW || bot->GetFreeInventorySpace() < 2)
                 break;
             Field* fields = result->Fetch();
-            uint8 const tab = fields[0].Get<uint8>();
-            uint8 const slot = fields[1].Get<uint8>();
-            uint32 const entry = fields[2].Get<uint32>();
+            uint8 const slot = fields[0].Get<uint8>();
+            uint32 const entry = fields[1].Get<uint32>();
             if (!CoaEnchanter::IsJunkTemplateForEnchanter(botAI, sObjectMgr->GetItemTemplate(entry), skill))
                 continue;
-            if (!guild->MemberHasTabRights(bot->GetGUID(), tab, GUILD_BANK_RIGHT_VIEW_TAB))
-            {
-                hiddenTabs.insert(tab + 1);
-                continue;
-            }
             uint8 bag = 0;
             uint8 bagSlot = 0;
             if (!FreeSlot(bot, bag, bagSlot))
@@ -161,15 +171,9 @@ public:
         if (taken)
             out << "Guild bank: took out " << taken << (taken == 1 ? " item" : " items") << " to disenchant.";
         if (refused)
-            out << (taken ? " " : "") << "Guild bank: my rank may not take items out (withdraw right or daily limit).";
-        if (!hiddenTabs.empty())
-        {
-            out << (out.str().empty() ? "" : " ") << "Guild bank: my rank cannot see tab";
-            for (uint32 tab : hiddenTabs)
-                out << " " << tab;
-            out << ".";
-        }
-        if (refused || !hiddenTabs.empty())
+            out << (taken ? " " : "") << "Guild bank: my rank may not take items out of tab " << configured
+                << " (withdraw right or daily limit).";
+        if (refused)
             LOG_INFO("playerbots", "Enchanter {} (guild {}): {}", bot->GetName(), guild->GetName(), out.str());
         if (!out.str().empty())
             botAI->TellMasterNoFacing(out.str());
@@ -217,6 +221,23 @@ bool CoaEnchanterAction::Execute(Event /*event*/)
     }
     bool const onMission = sCoaMissionMgr.IsOnMission(bot);
     bool const self = team.enchanter == bot->GetGUID().GetCounter();
+
+    // The bank mode with no tab configured works by mail: the player is told once.
+    if (team.bankWithoutTab)
+    {
+        bool tell = false;
+        {
+            std::lock_guard<std::mutex> guard(toldLock);
+            tell = toldNoTab.insert(master->GetGUID().GetCounter()).second;
+        }
+        if (tell)
+        {
+            LOG_INFO("playerbots", "Enchanter team of {}: bank mode without AiPlayerbot.GuildBankDeposit.Tab, by mail",
+                     master->GetName());
+            botAI->TellMasterNoFacing("Enchanter of the team: the guild bank mode needs a tab set on the server "
+                                      "(AiPlayerbot.GuildBankDeposit.Tab); the greens go by mail meanwhile.");
+        }
+    }
 
     // Near a vault of a real player's guild: the deposits are the guild bank deposit action's; a rank without the
     // rights is told once in a while.

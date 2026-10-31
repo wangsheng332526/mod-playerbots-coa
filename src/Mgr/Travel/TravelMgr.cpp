@@ -27,6 +27,7 @@
 #include "ObjectMgr.h"
 #include <iomanip>
 #include <numeric>
+#include <unordered_map>
 
 // Navigation data
 
@@ -5204,7 +5205,41 @@ TravelMgr::GatherCell const* TravelMgr::SelectGatherCell(Player* bot, uint32 ski
     return candidates[urand(0, uint32(pool - 1))].second;
 }
 
+namespace
+{
+struct NodesOfItem
+{
+    std::set<uint32> nodes;
+    uint32 skillId = 0;
+    uint32 reqSkill = 0;
+};
+std::mutex nodesOfItemLock;
+std::unordered_map<uint32, NodesOfItem> nodesOfItem;
+}  // namespace
+
+// Read once per item: the loot tables do not change while the server runs.
 std::set<uint32> TravelMgr::NodesYielding(uint32 itemId, uint32& skillId, uint32& reqSkill)
+{
+    {
+        std::lock_guard<std::mutex> guard(nodesOfItemLock);
+        auto const it = nodesOfItem.find(itemId);
+        if (it != nodesOfItem.end())
+        {
+            skillId = it->second.skillId;
+            reqSkill = it->second.reqSkill;
+            return it->second.nodes;
+        }
+    }
+    NodesOfItem read;
+    read.nodes = ReadNodesYielding(itemId, read.skillId, read.reqSkill);
+    skillId = read.skillId;
+    reqSkill = read.reqSkill;
+    std::lock_guard<std::mutex> guard(nodesOfItemLock);
+    nodesOfItem.emplace(itemId, read);
+    return read.nodes;
+}
+
+std::set<uint32> TravelMgr::ReadNodesYielding(uint32 itemId, uint32& skillId, uint32& reqSkill)
 {
     std::set<uint32> nodes;
     skillId = 0;
