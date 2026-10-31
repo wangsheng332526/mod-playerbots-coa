@@ -380,7 +380,7 @@ bool CoaMissionAction::Start(Player* requester, uint32 minutes, uint32 skillId, 
     if (!cell && skillId == SKILL_FISHING &&
         (!orderItem || orderNodes.count(bot->GetAreaId()) || orderNodes.count(bot->GetZoneId())))
     {
-        WorldPosition const water =
+        WorldPosition water =
             FindWaterRadial(bot, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetMap(),
                             bot->GetPhaseMask(), 5.0f, 40.0f, 2.5f, false, 16);
         if (water.IsValid())
