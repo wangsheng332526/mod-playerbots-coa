@@ -196,8 +196,11 @@ bool CoaEnchanterAction::Disenchant(uint32 skill)
     if (!bot->HasSpell(CoaEnchanter::DISENCHANT_SPELL) || bot->GetFreeInventorySpace() < 2 || bot->isMoving() ||
         bot->IsNonMeleeSpellCast(false) || bot->GetLootGUID() || bot->IsMounted())
         return false;
+    // What it took out of the bank is allowed as a bank item, the rest as the alts' greens.
+    bool const bank = CoaEnchanter::TeamOf(botAI).mode == CoaEnchanter::MODE_BANK;
     for (Item* item : BagItems(bot))
-        if (CoaEnchanter::IsJunkToDisenchant(botAI, item, skill))
+        if (CoaEnchanter::IsJunkToDisenchant(botAI, item, skill) ||
+            (bank && CoaEnchanter::IsJunkToDisenchant(botAI, item, skill, true)))
         {
             LOG_DEBUG("playerbots", "Enchanter {} disenchants {}", bot->GetName(), item->GetEntry());
             return botAI->CastSpell(CoaEnchanter::DISENCHANT_SPELL, bot, item);
@@ -268,6 +271,7 @@ bool CoaEnchanterAction::Execute(Event /*event*/)
         if (!onMission && Disenchant(skill))
             return true;
 
+        // Bank mode: only when the limits let something out of the bank (else TeamOf gives the mail mode).
         if (vault && team.mode == CoaEnchanter::MODE_BANK && now >= nextWithdraw && bot->GetFreeInventorySpace() >= 2)
         {
             nextWithdraw = now + WITHDRAW_SECONDS;
