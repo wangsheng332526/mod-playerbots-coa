@@ -22,6 +22,7 @@
 #include "PlayerbotAI.h"
 #include "PlayerbotAIConfig.h"
 #include "PlayerbotMgr.h"
+#include "PlayerbotOperation.h"
 #include "PlayerbotOperations.h"
 #include "PlayerbotWorldThreadProcessor.h"
 #include "Playerbots.h"
@@ -31,8 +32,10 @@
 
 #include <algorithm>
 #include <iomanip>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace
@@ -313,13 +316,14 @@ void CoaMissionMgr::ClearSaved(Player* bot)
     sRandomPlayerbotMgr.SetValue(bot, MISSION_ITEMS_KEY, 0);
 }
 
-// Mails to the owner what the mission gathered, never more than the bot still holds: whole stacks are moved as they
-// are, a stack holding more is split. The bot's inventory is saved in the same transaction as the mails.
-uint32 CoaMissionMgr::Deliver(Player* bot, ObjectGuid::LowType owner, std::map<uint32, uint32> const& items)
+namespace
 {
-    if (!bot || !owner || items.empty() || owner == bot->GetGUID().GetCounter())
-        return 0;
-
+// Mails the items, never more than the bot still holds: whole stacks are moved as they are, a stack holding more is
+// split. The bot's inventory is saved in the same transaction as the mails. receiver: the one mailed when it is
+// logged in, from the thread that runs it (its map's, or the world thread); null: the mail waits in the database.
+uint32 SendItemsNow(Player* bot, ObjectGuid::LowType owner, std::map<uint32, uint32> const& items,
+                    std::string const& subject, std::string const& body, Player* receiver)
+{
     ObjectGuid const ownerGuid = ObjectGuid::Create<HighGuid::Player>(owner);
     CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
     std::vector<Item*> toMail;
@@ -382,12 +386,9 @@ uint32 CoaMissionMgr::Deliver(Player* bot, ObjectGuid::LowType owner, std::map<u
         return 0;
     }
 
-    Player* receiver = ObjectAccessor::FindConnectedPlayer(ownerGuid);
-    std::ostringstream body;
-    body << "Here is what I gathered on my mission.";
     for (size_t first = 0; first < toMail.size(); first += MAX_MAIL_ITEMS)
     {
-        MailDraft draft("Mission: what I gathered", body.str());
+        MailDraft draft(subject, body);
         for (size_t i = first; i < toMail.size() && i < first + MAX_MAIL_ITEMS; ++i)
             draft.AddItem(toMail[i]);
         draft.SendMailTo(trans, MailReceiver(receiver, owner), MailSender(bot));
@@ -395,6 +396,67 @@ uint32 CoaMissionMgr::Deliver(Player* bot, ObjectGuid::LowType owner, std::map<u
     bot->SaveInventoryAndGoldToDB(trans);
     CharacterDatabase.CommitTransaction(trans);
     return sent;
+}
+
+// A receiver logged in on another map: the mail is sent from the world thread, where both players may be touched.
+class CoaMailOperation : public PlayerbotOperation
+{
+public:
+    CoaMailOperation(ObjectGuid bot, ObjectGuid::LowType to, std::map<uint32, uint32> items, std::string subject,
+                     std::string body)
+        : m_bot(bot), m_to(to), m_items(std::move(items)), m_subject(std::move(subject)), m_body(std::move(body))
+    {
+    }
+
+    ObjectGuid GetBotGuid() const override { return m_bot; }
+    std::string GetName() const override { return "CoaMail"; }
+
+    bool Execute() override
+    {
+        Player* bot = ObjectAccessor::FindPlayer(m_bot);
+        if (!bot || !bot->IsInWorld())
+            return false;
+        Player* receiver = ObjectAccessor::FindConnectedPlayer(ObjectGuid::Create<HighGuid::Player>(m_to));
+        return SendItemsNow(bot, m_to, m_items, m_subject, m_body, receiver) > 0;
+    }
+
+private:
+    ObjectGuid m_bot;
+    ObjectGuid::LowType m_to;
+    std::map<uint32, uint32> m_items;
+    std::string m_subject;
+    std::string m_body;
+};
+}  // namespace
+
+uint32 CoaMissionMgr::MailItems(Player* bot, ObjectGuid::LowType to, std::map<uint32, uint32> const& items,
+                                std::string const& subject, std::string const& body)
+{
+    if (!bot || !to || items.empty() || to == bot->GetGUID().GetCounter())
+        return 0;
+
+    ObjectGuid const toGuid = ObjectGuid::Create<HighGuid::Player>(to);
+    // On the bot's map (this thread's), or not logged in: at once.
+    if (Player* near = ObjectAccessor::GetPlayer(*bot, toGuid))
+        return SendItemsNow(bot, to, items, subject, body, near);
+    if (!ObjectAccessor::FindConnectedPlayer(toGuid))
+        return SendItemsNow(bot, to, items, subject, body, nullptr);
+
+    // Logged in elsewhere: from the world thread. What it will send, for the bot's line.
+    uint32 planned = 0;
+    for (auto const& [entry, count] : items)
+        planned += std::min<uint32>(count, bot->GetItemCount(entry, false));
+    if (!planned)
+        return 0;
+    if (!PlayerbotWorldThreadProcessor::instance().QueueOperation(
+            std::make_unique<CoaMailOperation>(bot->GetGUID(), to, items, subject, body)))
+        return SendItemsNow(bot, to, items, subject, body, nullptr);
+    return planned;
+}
+
+uint32 CoaMissionMgr::Deliver(Player* bot, ObjectGuid::LowType owner, std::map<uint32, uint32> const& items)
+{
+    return MailItems(bot, owner, items, "Mission: what I gathered", "Here is what I gathered on my mission.");
 }
 
 void CoaMissionMgr::RestoreStrategiesAndGroup(Player* bot, uint32 prevFlags)

@@ -8,6 +8,7 @@
 
 #include "CharacterCache.h"
 #include "CoaAltAddon.h"
+#include "CoaMissionMgr.h"
 #include "DatabaseEnv.h"
 #include "Item.h"
 #include "ItemUsageValue.h"
@@ -301,41 +302,12 @@ bool KeepFromVendor(PlayerbotAI* botAI, Item* item)
 uint32 MailItems(Player* bot, ObjectGuid::LowType to, std::vector<Item*> const& items, std::string const& subject,
                  std::string const& body)
 {
-    if (!bot || !to || items.empty() || to == bot->GetGUID().GetCounter())
-        return 0;
-
-    ObjectGuid const receiverGuid = ObjectGuid::Create<HighGuid::Player>(to);
-    CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
-    std::vector<Item*> toMail;
-    uint32 count = 0;
+    // By entry: the mission's mailer takes the stacks of the bags (never soulbound, never equipped).
+    std::map<uint32, uint32> counts;
     for (Item* item : items)
-    {
-        if (!item || item->IsEquipped() || item->IsSoulBound() || item->IsNotEmptyBag())
-            continue;
-        count += item->GetCount();
-        bot->MoveItemFromInventory(item->GetBagSlot(), item->GetSlot(), true);
-        item->DeleteFromInventoryDB(trans);
-        item->SetOwnerGUID(receiverGuid);
-        item->SaveToDB(trans);
-        toMail.push_back(item);
-    }
-    if (toMail.empty())
-    {
-        CharacterDatabase.CommitTransaction(trans);
-        return 0;
-    }
-
-    Player* receiver = ObjectAccessor::FindConnectedPlayer(receiverGuid);
-    for (size_t first = 0; first < toMail.size(); first += MAX_MAIL_ITEMS)
-    {
-        MailDraft draft(subject, body);
-        for (size_t i = first; i < toMail.size() && i < first + MAX_MAIL_ITEMS; ++i)
-            draft.AddItem(toMail[i]);
-        draft.SendMailTo(trans, MailReceiver(receiver, to), MailSender(bot));
-    }
-    bot->SaveInventoryAndGoldToDB(trans);
-    CharacterDatabase.CommitTransaction(trans);
-    return count;
+        if (item && !item->IsEquipped() && !item->IsSoulBound())
+            counts[item->GetEntry()] += item->GetCount();
+    return CoaMissionMgr::MailItems(bot, to, counts, subject, body);
 }
 
 void SendStatus(PlayerbotAI* botAI)

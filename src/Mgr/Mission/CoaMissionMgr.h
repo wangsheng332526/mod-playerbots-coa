@@ -131,6 +131,11 @@ public:
     static void ApplyEngineStrategies(Engine* nonCombatEngine, bool bench = false);
     bool IsBench(Player* bot) const;
     static uint32 ReadStrategyFlags(PlayerbotAI* botAI);
+    // Mails items of the bags (entry, count), whole stacks or split, to a character logged in or not. On the bot's
+    // map or not logged in: at once; logged in elsewhere: from the world thread (the count returned is then what
+    // the bot holds). Returns how many items.
+    static uint32 MailItems(Player* bot, ObjectGuid::LowType to, std::map<uint32, uint32> const& items,
+                            std::string const& subject, std::string const& body);
     // Equips an item of the bags, as the client would.
     static void EquipItem(Player* bot, Item* item, uint8 slot);
 
