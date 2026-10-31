@@ -204,6 +204,8 @@ public:
     std::string GetData(uint32 bot, std::string const& type);
     void SetValue(uint32 bot, std::string const& type, uint32 value, std::string const& data = "");
     void SetValue(Player* bot, std::string const& type, uint32 value, std::string const& data = "");
+    // A value that never expires (the choices of a player: the enchanter of the team).
+    void SetPermanentValue(uint32 guid, std::string const& type, uint32 value, std::string const& data = "");
     bool IsSpecPvp(uint32 bot, uint8 cls);
     // AiPlayerbot.CoaGearByContent: PvP or PvE gear for what the random bot does, at its grouping player's item level.
     void CoaUpdateGear(Player* bot);

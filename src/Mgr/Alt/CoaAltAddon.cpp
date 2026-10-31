@@ -7,6 +7,7 @@
 #include "CoaAltAddon.h"
 
 #include "ChatHelper.h"
+#include "CoaEnchanter.h"
 #include "DisableMgr.h"
 #include "Log.h"
 #include "ObjectMgr.h"
@@ -254,6 +255,7 @@ bool OnAddonWhisper(Player* from, Player* receiver, std::string const& msg)
         out << "HELLO\t" << PROTOCOL << "\t" << (sPlayerbotAIConfig.catchUpQuestChains ? 1 : 0) << "\t"
             << (sPlayerbotAIConfig.altChatToAddon ? 1 : 0);
         Send(receiver, from, out.str());
+        CoaEnchanter::SendStatus(botAI);
         return true;
     }
 
