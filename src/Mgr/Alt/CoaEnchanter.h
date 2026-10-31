@@ -32,7 +32,7 @@ constexpr uint32 DISENCHANT_SPELL = 13262;
 constexpr uint32 LIMIT_ALT_GREENS = 0x1;   // altgreens: the greens of the alts' bags (its own too)
 constexpr uint32 LIMIT_BANK_GREENS = 0x2;  // bankgreens: greens out of the guild bank
 constexpr uint32 LIMIT_BLUES = 0x4;        // blues: blue bind on equip gear, from the alts and the bank
-constexpr uint32 LIMIT_WEARABLE = 0x8;     // wearable: even gear an alt of the team could wear
+constexpr uint32 LIMIT_WEARABLE = 0x8;     // wearable: even gear that is an upgrade for an alt of the team
 constexpr uint32 LIMITS_DEFAULT = LIMIT_ALT_GREENS;
 
 struct Team
